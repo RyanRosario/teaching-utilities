@@ -5,7 +5,6 @@ import pdb
 import re
 import sys
 
-
 import pandas as pd  # 
 
 from openai import OpenAI
@@ -58,7 +57,8 @@ def chatgpt(cell, client):
     messages=[
         {
             "role": "system",
-            "content": "What is the probability that the following text came from ChatGPT? At the end of your response, print a line that contains only the word 'Probability: ' followed by the probability score on a scale from 0 to 1."
+            "content": "What is the probability that the following text came from ChatGPT? At the end of your response, " +
+            "print a line that contains only the word 'Probability: ' followed by the probability score on a scale from 0 to 1."
         },
         {
             "role": "user",
@@ -71,11 +71,9 @@ def chatgpt(cell, client):
 
 
 def generate_chatgpt(client, submissions: pd.DataFrame):
-    # For each student generate one file at the root level.
     results = []
     narratives = []
-    series_names = None
-    for index, row in submissions.iterrows():
+    for _, row in submissions.iterrows():
         extracted_columns = row.iloc[6:]
         subject = extracted_columns.iloc[2:6]
         series_names_scores = [colname.replace('Response', 'ChatGPT Score') for colname in subject.index]
