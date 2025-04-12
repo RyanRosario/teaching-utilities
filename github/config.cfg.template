@@ -1,0 +1,6 @@
+[github]
+organization = organization-name
+token = personal-access-token
+exclude = 
+    repo1
+    repo2

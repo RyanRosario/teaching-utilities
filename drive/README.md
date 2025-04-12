@@ -17,4 +17,4 @@ Go to the main page for the directory where you wish to recursively revoke acces
 5. Paste the folder ID into the main function the script as in the screenshot below.
 6. Select the `main` function from the dropdown menu and click the Run button.
 
-![Image of the script with the pasted folder URL/ID circled in red](gradescope.png "Google Drive Script Editor")
+This will time out on large directories. Use with smaller directories and then iterate.
