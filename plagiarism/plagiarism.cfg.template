@@ -1,0 +1,6 @@
+[moss]
+userid = MOSS-USER-ID
+
+[chatgpt]
+organization = OPENAI-ORGANIZATION
+project = PROJECT-TOKEN
