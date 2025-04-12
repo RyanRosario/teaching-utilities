@@ -1,3 +1,5 @@
+directory = 'YOUR_FOLDER_ID'
+
 function removeSharingFromFolder(folderId) {
   const folder = DriveApp.getFolderById(folderId);
   console.log(`Starting sharing removal in folder: ${folder.getName()}`);
@@ -11,18 +13,20 @@ function removeSharingRecursively(folder) {
   let fileCount = 0;
   while (files.hasNext()) {
     const file = files.next();
-    try {
-      removeAllPermissions(file);
-      fileCount++;
-      console.log(`Permissions removed for file: ${file.getName()} (${fileCount})`);
-    } catch (e) {
-      console.error(`Failed to remove permissions for file: ${file.getName()}. Error: ${e}`);
-    }
-    // Prevent timeout by stopping after every 50 files
-    if (fileCount >= 50) {
-      console.log("Pausing for a moment to prevent timeout.");
-      Utilities.sleep(1000); // Wait 1 second before resuming
-      fileCount = 0;
+      if (file.getMimeType() === "application/pdf" || file.getMimeType() === "application/tex") {
+      try {
+        removeAllPermissions(file);
+        fileCount++;
+        console.log(`Permissions removed for file: ${file.getName()} (${fileCount})`);
+      } catch (e) {
+        console.error(`Failed to remove permissions for file: ${file.getName()}. Error: ${e}`);
+      }
+      // Prevent timeout by stopping after every 50 files
+      if (fileCount >= 50) {
+        console.log("Pausing for a moment to prevent timeout.");
+        Utilities.sleep(1000); // Wait 1 second before resuming
+        fileCount = 0;
+      }
     }
   }
 
@@ -30,7 +34,6 @@ function removeSharingRecursively(folder) {
   const subfolders = folder.getFolders();
   while (subfolders.hasNext()) {
     const subfolder = subfolders.next();
-    console.log(`Entering subfolder: ${subfolder.getName()}`);
     removeSharingRecursively(subfolder);
   }
 }
@@ -58,12 +61,11 @@ function removeAllPermissions(file) {
     }
   });
 }
-
 // To run the script:
-// 1. Replace 'YOUR_FOLDER_ID' with the actual ID of your root folder.
+// 1. Replace 'YOUR_FOLDER_ID' at the top with the actual ID of your root folder.
 // 2. In the Script Editor, click the 'Run' button and select the function.
 function main() {
-  var rootFolderId = '1OixE45ELNB65LkasdR6z8zCT69o-uk7v';  // enter folder ID here.
+  var rootFolderId = directory;  // enter folder ID here.
   removeSharingFromFolder(rootFolderId);
-  conole.log('Process complete.');
+  console.log('Process complete.');
 }
