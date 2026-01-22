@@ -5,6 +5,17 @@ set -e
 
 echo "Starting PostgreSQL installation and configuration..."
 
+# 0. Clean Reinstall Logic
+if dpkg -l | grep -qw postgresql; then
+    echo "Existing PostgreSQL installation detected. Removing and purging..."
+    sudo systemctl stop postgresql || true
+    sudo apt-get purge -y postgresql*
+    sudo apt-get autoremove -y
+    # Ensure a completely fresh state by removing data and config directories
+    sudo rm -rf /etc/postgresql /var/lib/postgresql /var/log/postgresql
+    echo "PostgreSQL removed. Proceeding with fresh installation..."
+fi
+
 # 1. Update system and add PostgreSQL Global Development Group (PGDG) repository
 # This ensures we get the true "LATEST" version, not just what's in the Ubuntu repo.
 sudo apt-get update
@@ -64,7 +75,8 @@ fi
 cat <<EOF | sudo tee -a "$CONF_FILE"
 
 # --- Automatic pgaudit configuration ---
-pgaudit.log = 'write, ddl' 
+# --- Automatic pgaudit configuration ---
+pgaudit.log = 'all' 
 pgaudit.log_catalog = on
 pgaudit.log_level = log
 # ---------------------------------------

@@ -134,8 +134,13 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
 
     # Check if user already exists to prompt for recreation
     if id "$username" &>/dev/null; then
-        echo -n "User '$username' already exists. Delete and recreate? [y/N] "
-        # Read from terminal/tty explicitly because stdin is the CSV
+        # Log that we are asking
+        echo "User '$username' exists. prompting for recreation..."
+        
+        # Write prompt directly to TTY to bypass log buffering/redirection
+        echo -n "User '$username' already exists. Delete and recreate? [y/N] " > /dev/tty
+        
+        # Read from terminal/tty explicitly
         read -r response < /dev/tty
         if [[ "$response" =~ ^[yY] ]]; then
             echo "Deleting user '$username' and home directory..."
