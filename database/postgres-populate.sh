@@ -142,6 +142,43 @@ else
     echo "Database '$ADMIN_DB' already exists."
 fi
 
+# 0.5 Setup Student Database (Shared Workspace)
+CS143_DB="cs143"
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$CS143_DB'" | grep -q 1; then
+    sudo -u postgres createdb "$CS143_DB"
+    echo "Created database '$CS143_DB'."
+    # We DO want students to connect here, but only see their own schemas.
+else
+    echo "Database '$CS143_DB' already exists."
+fi
+
+# 0.6 Setup Exam Databases (midterm, final) - Admin Only
+for db in "midterm" "final"; do
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
+        sudo -u postgres createdb "$db"
+        echo "Created restricted database '$db'."
+        # Restrict Access: Only Superusers (Admins) can connect
+        sudo -u postgres psql -d "$db" -c "REVOKE CONNECT ON DATABASE \"$db\" FROM PUBLIC;"
+        echo "Restricted access to '$db'."
+    else
+        echo "Database '$db' already exists."
+    fi
+done
+
+# Configure Public Schema Permissions in CS143
+# Goal: Everyone can READ public, only Admins can EDIT public.
+# Note: Admins are Superusers, so they ignore permission checks (have full access).
+# We restrict 'PUBLIC' (which includes students) to Read-Only.
+
+echo "Configuring permissions for 'public' schema in '$CS143_DB'..."
+# 1. Revoke CREATE from PUBLIC (Students cannot create tables in public)
+sudo -u postgres psql -d "$CS143_DB" -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
+# 2. Grant USAGE (Access) and SELECT (Read) to PUBLIC
+sudo -u postgres psql -d "$CS143_DB" -c "GRANT USAGE ON SCHEMA public TO PUBLIC;"
+sudo -u postgres psql -d "$CS143_DB" -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO PUBLIC;"
+# 3. Ensure future tables created by postgres/admins are readable by PUBLIC
+sudo -u postgres psql -d "$CS143_DB" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC;"
+
 # ALWAYS Ensure Table Exists
 # Use IF NOT EXISTS in SQL to handle re-runs safely
 sudo -u postgres psql -d "$ADMIN_DB" -c "
@@ -177,12 +214,13 @@ process_admins_postgres() {
                 sudo -u postgres createuser --superuser "$username"
                 echo "Created Postgres superuser '$username'."
         fi
-        # Create Database
-        if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$username'" | grep -q 1; then
-                sudo -u postgres createdb -O "$username" "$username"
-                echo "Created database '$username'."
-        fi
-        sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE \"$username\" TO \"$username\";" >/dev/null
+
+        # Create Personal Schema for Admin in CS143 DB
+        # Admins have full access anyway (Superuser), but this gives them a personal workspace.
+        sudo -u postgres psql -d "$CS143_DB" -c "CREATE SCHEMA IF NOT EXISTS \"$username\" AUTHORIZATION \"$username\";" >/dev/null
+        # Set search_path for Admin to default to their schema
+        sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
+        echo "Created admin workspace schema '$username' in '$CS143_DB'."
 
         # Insert Admin into students table (as requested)
         # Admins might not have a real student UID, so we use their provided UID or hash it.
@@ -274,15 +312,26 @@ process_roster_postgres() {
                echo "Created Postgres role '$username'."
         fi
 
-        # B. Create Schema
-        if ! sudo -u postgres psql -tAc "SELECT 1 FROM information_schema.schemata WHERE schema_name='$username'" | grep -q 1; then
-               sudo -u postgres psql -c "CREATE SCHEMA \"$username\" AUTHORIZATION \"$username\";" >/dev/null
-               # Secure it:
-               sudo -u postgres psql -c "REVOKE ALL ON SCHEMA \"$username\" FROM PUBLIC;" >/dev/null
-               echo "Created Postgres schema '$username'."
+        # B. Create Schema in CS143_DB
+        # Students connect to CS143_DB (cs143).
+        
+        # 1. Grant Connect to the DB
+        sudo -u postgres psql -d "$CS143_DB" -c "GRANT CONNECT ON DATABASE \"$CS143_DB\" TO \"$username\";" >/dev/null
+
+        # 2. Designate Schema
+        if ! sudo -u postgres psql -d "$CS143_DB" -tAc "SELECT 1 FROM information_schema.schemata WHERE schema_name='$username'" | grep -q 1; then
+               sudo -u postgres psql -d "$CS143_DB" -c "CREATE SCHEMA \"$username\" AUTHORIZATION \"$username\";" >/dev/null
+               
+               # Isolate it: No one else can usage/create in this schema
+               sudo -u postgres psql -d "$CS143_DB" -c "REVOKE ALL ON SCHEMA \"$username\" FROM PUBLIC;" >/dev/null
+               
+               # Set search_path so they land in their schema by default
+               sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\";" >/dev/null
+               
+               echo "Created private schema '$username' in '$CS143_DB'."
         fi
 
-        # C. Insert into admin.students
+        # C. Insert into admin.students (Registry is still in ADMIN_DB)
         hashed_uid=$(echo -n "$raw_uid" | sha256sum | awk '{print $1}')
         
         sudo -u postgres psql -d "$ADMIN_DB" -c "
