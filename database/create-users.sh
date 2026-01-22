@@ -20,6 +20,12 @@ if [[ ! -f "$INPUT_FILE" ]]; then
     exit 1
 fi
 
+# Parse arguments
+RECREATE=false
+if [[ "$2" == "--recreate" ]]; then
+    RECREATE=true
+fi
+
 LOG_FILE="create-users.log"
 # Redirect all output to log file and syslog
 # logger -s sends the message to standard error as well as to the system log
@@ -51,17 +57,16 @@ set_pw_config() {
 }
 
 # Enforce secure policies:
-# minlen: Minimum length of 8 characters
-# minclass: Require at least 3 character classes (uppercase, lowercase, digits, special)
-# retry: Allow 3 retries
-# minlen: Minimum length of 8 characters (Strong policy for user changes)
-set_pw_config "minlen" "8"
-set_pw_config "minclass" "3"
-set_pw_config "retry" "3"
 # enforce_for_root: 0 allows the admin (running this script) to set initial passwords
 # that might not pass the strict checks (e.g. simple temp passwords).
-# The users themselves will still be forced to pick strong passwords on next login.
 set_pw_config "enforce_for_root" "0"
+
+# Note: We do NOT set minlen/minclass yet. If they are already set in the file from a previous run,
+# we might need to relax them temporarily if the initial passwords in CSV are weak.
+# However, enforce_for_root=0 usually bypasses this for root. 
+# But just in case, let's relax them now to ensure the script succeeds, and tighten them at the end.
+set_pw_config "minlen" "1"
+set_pw_config "minclass" "1"
 
 # Enable SSH Password Authentication
 # This ensures that created users can actually log in using the passwords we just set.
@@ -132,19 +137,10 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
         continue
     fi
 
-    # Check if user already exists to prompt for recreation
+    # Check if user already exists
     if id "$username" &>/dev/null; then
-        # Sleep briefly to allow previous logs to flush to the terminal
-        # This prevents the prompt from being overwritten by delayed log output
-        sleep 1
-        
-        # Write prompt directly to TTY to bypass log buffering/redirection
-        echo -n "User '$username' already exists. Delete and recreate? [y/N] " > /dev/tty
-        
-        # Read from terminal/tty explicitly
-        read -r response < /dev/tty
-        if [[ "$response" =~ ^[yY] ]]; then
-            echo "Deleting user '$username' and home directory..."
+        if [ "$RECREATE" = true ]; then
+            echo "User '$username' exists. Deleting and recreating (as requested via --recreate)..."
             # userdel -r removes home dir and mail spool
             if ! userdel -r "$username"; then
                  echo "Error: Failed to delete user '$username'. Skipping recreation."
@@ -152,7 +148,7 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
             fi
             # User deleted, proceed to creation below
         else
-            echo "Skipping '$username'."
+            echo "Skipping '$username' (exists). Pass --recreate to overwrite."
             continue
         fi
     fi
@@ -194,5 +190,14 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
     fi
 
 done < "$INPUT_FILE"
+
+echo "All users processed."
+
+# Now that users are created with their initial (potentially weak) passwords,
+# we ENFORCE the strict policy for future password changes.
+echo "Enforcing strict password policies (min 8 chars, 3 classes) for future changes..."
+set_pw_config "minlen" "8"
+set_pw_config "minclass" "3"
+set_pw_config "retry" "3"
 
 echo "User creation process complete."
