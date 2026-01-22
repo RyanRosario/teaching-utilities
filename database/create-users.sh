@@ -16,16 +16,60 @@ RECREATE=false
 for arg in "$@"; do
     if [[ "$arg" == "--recreate" ]]; then
         RECREATE=true
-    elif [[ "$arg" == "--add-admin" ]]; then
-        MODE="interactive_admin"
     elif [[ "$arg" == "--add-student" ]]; then
         MODE="interactive_student"
+    elif [[ "$arg" == "--admin" ]]; then
+        NEXT_IS_ADMIN=true
+    elif [[ "$arg" == "--roster" ]]; then
+        NEXT_IS_ROSTER=true
+    elif [[ "$NEXT_IS_ADMIN" == true ]]; then
+        ADMIN_FILE="$arg"
+        NEXT_IS_ADMIN=false
+    elif [[ "$NEXT_IS_ROSTER" == true ]]; then
+        ROSTER_FILE="$arg"
+        NEXT_IS_ROSTER=false
     elif [[ -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
         ADMIN_FILE="$arg"
     elif [[ -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
         ROSTER_FILE="$arg"
     fi
 done
+
+# Auto-detect file types based on content (Heuristic)
+guess_file_type() {
+    local f=$1
+    if [[ ! -f "$f" ]]; then echo "unknown"; return; fi
+    # Read first few bytes/lines
+    local h=$(head -n 1 "$f")
+    # Winter roster starts with "Term:". Template starts with "UID,"
+    if [[ "$h" =~ ^Term: ]] || [[ "$h" =~ ^UID, ]]; then
+        echo "roster"
+    elif [[ "$h" =~ ^username, ]]; then
+        echo "admin"
+    else
+        echo "unknown"
+    fi
+}
+
+if [[ -n "$ADMIN_FILE" && -z "$ROSTER_FILE" ]]; then
+    # Single file case: Check if it's actually a roster
+    type=$(guess_file_type "$ADMIN_FILE")
+    if [[ "$type" == "roster" ]]; then
+        echo "Note: Detected student roster in first argument. Proceeding in Roster mode."
+        ROSTER_FILE="$ADMIN_FILE"
+        ADMIN_FILE=""
+    fi
+elif [[ -n "$ADMIN_FILE" && -n "$ROSTER_FILE" ]]; then
+    # Two files case: Check if swapped
+    t1=$(guess_file_type "$ADMIN_FILE")
+    t2=$(guess_file_type "$ROSTER_FILE")
+    if [[ "$t1" == "roster" && "$t2" == "admin" ]]; then
+         echo "Note: Detected swapped Admin/Roster files. Auto-correcting."
+         tmp="$ADMIN_FILE"
+         ADMIN_FILE="$ROSTER_FILE"
+         ROSTER_FILE="$tmp"
+    fi
+fi
 
 if [[ "$MODE" == "interactive_admin" ]]; then
      read -rp "Enter Admin Username: " u
@@ -38,6 +82,13 @@ if [[ "$MODE" == "interactive_admin" ]]; then
      t=$(mktemp)
      echo "$u,$n,$p,$i,$e" > "$t"
      process_admins_file "$t"
+     
+     # Trigger Postgres population
+     if [[ -f "./postgres-populate.sh" ]]; then
+          echo "Triggering Postgres provisioning for Admin..."
+          ./postgres-populate.sh --admin "$t"
+     fi
+     
      rm "$t"
      exit 0
 elif [[ "$MODE" == "interactive_student" ]]; then
@@ -50,14 +101,26 @@ elif [[ "$MODE" == "interactive_student" ]]; then
      t=$(mktemp)
      echo "$i,\"$l, $f\",$e,INTERACTIVE,MODE,," > "$t"
      process_roster_file "$t"
+     
+     # Trigger Postgres population (pass as 2nd arg)
+     if [[ -f "./postgres-populate.sh" ]]; then
+          echo "Triggering Postgres provisioning for Student..."
+          ./postgres-populate.sh --roster "$t"
+     fi
+     
      rm "$t"
      exit 0
 fi
 
-if [[ -z "$ADMIN_FILE" ]]; then
-    # At least one file is usually expected, but technically we could support optional.
-    # User said "accept two files".
-    echo "Usage: $0 <admin_csv> <student_roster_csv> [--recreate]"
+if [[ -z "$ADMIN_FILE" && -z "$ROSTER_FILE" && -z "$MODE" ]]; then
+    echo "Usage: $0 [options]"
+    echo "Options:"
+    echo "  --admin <file>       Path to Admin CSV"
+    echo "  --roster <file>      Path to Student Roster CSV"
+    echo "  --add-admin          Interactively add an admin"
+    echo "  --add-student        Interactively add a student"
+    echo "  --recreate           Recreate existing users"
+    echo "  <admin_file> <roster_file> (Classic positional usage)"
     exit 1
 fi
 if [[ ! -f "$ADMIN_FILE" ]]; then
@@ -400,3 +463,15 @@ set_pw_config "enforcing" "1"
 set_pw_config "dictcheck" "1"
 
 echo "User creation process complete."
+
+# Trigger Postgres Population for Batch Mode
+if [[ -f "./postgres-populate.sh" ]]; then
+    if [[ -n "$ADMIN_FILE" || -n "$ROSTER_FILE" ]]; then
+         echo "Automatically triggering Postgres population..."
+         CMD="./postgres-populate.sh"
+         if [[ -n "$ADMIN_FILE" ]]; then CMD="$CMD --admin \"$ADMIN_FILE\""; fi
+         if [[ -n "$ROSTER_FILE" ]]; then CMD="$CMD --roster \"$ROSTER_FILE\""; fi
+         
+         eval "$CMD"
+    fi
+fi

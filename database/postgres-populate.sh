@@ -24,12 +24,56 @@ for arg in "$@"; do
         MODE="interactive_admin"
     elif [[ "$arg" == "--add-student" ]]; then
         MODE="interactive_student"
+    elif [[ "$arg" == "--admin" ]]; then
+        NEXT_IS_ADMIN=true
+    elif [[ "$arg" == "--roster" ]]; then
+        NEXT_IS_ROSTER=true
+    elif [[ "$NEXT_IS_ADMIN" == true ]]; then
+        ADMIN_FILE="$arg"
+        NEXT_IS_ADMIN=false
+    elif [[ "$NEXT_IS_ROSTER" == true ]]; then
+        ROSTER_FILE="$arg"
+        NEXT_IS_ROSTER=false
     elif [[ -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
         ADMIN_FILE="$arg"
     elif [[ -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
         ROSTER_FILE="$arg"
     fi
 done
+
+# Auto-detect file types based on content (Heuristic)
+guess_file_type() {
+    local f=$1
+    if [[ ! -f "$f" ]]; then echo "unknown"; return; fi
+    local h=$(head -n 1 "$f")
+    if [[ "$h" =~ ^Term: ]] || [[ "$h" =~ ^UID, ]]; then
+        echo "roster"
+    elif [[ "$h" =~ ^username, ]]; then
+        echo "admin"
+    else
+        echo "unknown"
+    fi
+}
+
+if [[ -n "$ADMIN_FILE" && -z "$ROSTER_FILE" ]]; then
+    # Single file passed. Check if it's actually roster.
+    type=$(guess_file_type "$ADMIN_FILE")
+    if [[ "$type" == "roster" ]]; then
+        echo "Note: Detected student roster in first argument. Proceeding in Roster mode."
+        ROSTER_FILE="$ADMIN_FILE"
+        ADMIN_FILE=""
+    fi
+elif [[ -n "$ADMIN_FILE" && -n "$ROSTER_FILE" ]]; then
+    # Two files. Check if swapped.
+    t1=$(guess_file_type "$ADMIN_FILE")
+    t2=$(guess_file_type "$ROSTER_FILE")
+    if [[ "$t1" == "roster" && "$t2" == "admin" ]]; then
+         echo "Note: Detected swapped Admin/Roster files. Auto-correcting."
+         tmp="$ADMIN_FILE"
+         ADMIN_FILE="$ROSTER_FILE"
+         ROSTER_FILE="$tmp"
+    fi
+fi
 
 if [[ "$MODE" == "interactive_admin" ]]; then
      # For Postgres Admin process, we only strictly need the username to exist in system.
@@ -66,9 +110,10 @@ elif [[ "$MODE" == "interactive_student" ]]; then
      exit 0
 fi
 
-if [[ -z "$ADMIN_FILE" && -z "$ROSTER_FILE" ]]; then
-    echo "Usage: $0 <path_to_admin_csv> [path_to_roster_csv]"
-    echo "This script populates Postgres users/DBs based on the CSVs and enables peer auth."
+if [[ -z "$ADMIN_FILE" && -z "$ROSTER_FILE" && -z "$MODE" ]]; then
+    echo "Usage: $0 [options]"
+    echo "  --admin <file>   Admin CSV"
+    echo "  --roster <file>  Roster CSV"
     exit 1
 fi
 if [[ -n "$ADMIN_FILE" && ! -f "$ADMIN_FILE" ]]; then
