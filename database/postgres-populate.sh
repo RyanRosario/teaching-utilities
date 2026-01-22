@@ -137,25 +137,13 @@ process_roster_postgres() {
         email=$(echo "$c4" | xargs)
 
         # Override Check
-        override=""
-        possible_c7=$(echo "$c7" | tr -d '\r' | xargs)
-        possible_c6=$(echo "$c6" | tr -d '\r' | xargs)
-        if [[ -n "$possible_c7" ]] && [[ "$possible_c7" =~ ^[a-z0-9_]+$ ]]; then
-             override="$possible_c7"
-        elif [[ -n "$possible_c6" ]] && [[ "$possible_c6" =~ ^[a-z0-9_]+$ ]]; then
-             override="$possible_c6"
-        fi
-
+        # Removed: The provided roster does NOT have an override column. 
+        # c6/c7 contain Class/Grade info.
+        
         target_username=""
         
-        # 1. Try Override
-        if [[ -n "$override" ]]; then
-             if is_available "$override"; then
-                  target_username="$override"
-             fi
-        fi
-
-        # 2. Try Standard Generation candidates if no override matched yet
+        # 1. Try Standard Generation candidates
+        # We try to match what create-users.sh would have generated.
         if [[ -z "$target_username" ]]; then
              f=$(sanitize "$first_names_raw")
              l=$(sanitize "$last_name_raw")

@@ -278,33 +278,19 @@ process_roster_file() {
         email=$(echo "$c4" | xargs)
         
         # Username Parsing / Generation
-        # Check c7 then c6 for potential override
-        override=""
-        possible_c7=$(echo "$c7" | tr -d '\r' | xargs)
-        possible_c6=$(echo "$c6" | tr -d '\r' | xargs)
+        # The provided roster format does NOT have a username override column.
+        # Format: UID, "Last, First", Email, Major, Classification, Grade, Status, Section
+        # Bash readline via comma:
+        # c1=UID, c2="Last, c3=First", c4=Email, c5=Major, c6=Class, c7=Grade...
+        # We process c1, c2, c3, c4. We IGNORE others to avoid mistaking 'GMT' or 'LG' for usernames.
         
-        # If c7 looks like a specific username override
-        if [[ -n "$possible_c7" ]] && [[ "$possible_c7" =~ ^[a-z0-9_]+$ ]]; then
-             override="$possible_c7"
-        elif [[ -n "$possible_c6" ]] && [[ "$possible_c6" =~ ^[a-z0-9_]+$ ]]; then
-             override="$possible_c6"
-        fi
-
         global_uname=""
-        if [[ -n "$override" ]]; then
-             if ! is_taken "$override"; then
-                  global_uname="$override"
-             else
-                  echo "Warning: Override '$override' unavailable. Generating generic username."
-             fi
-        fi
-
+        # Generate username using proposed strategy
+        global_uname=$(propose_username "$first_names_raw" "$last_name_raw")
+        
         if [[ -z "$global_uname" ]]; then
-             global_uname=$(propose_username "$first_names_raw" "$last_name_raw")
-             if [[ -z "$global_uname" ]]; then
-                  echo "Error: Could not generate unique username for $name. Skipping."
-                  continue
-             fi
+             echo "Error: Could not generate unique username for $name. Skipping."
+             continue
         fi
 
         # Add to batch
