@@ -138,21 +138,22 @@ if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$ADMIN
     # We revoke connect from PUBLIC to ensure only authorized users access it.
     sudo -u postgres psql -d "$ADMIN_DB" -c "REVOKE CONNECT ON DATABASE \"$ADMIN_DB\" FROM PUBLIC;"
     echo "Restricted access to '$ADMIN_DB'."
-
-    # Create 'students' table
-    sudo -u postgres psql -d "$ADMIN_DB" -c "
-    CREATE TABLE students (
-        student_id SERIAL PRIMARY KEY,
-        student_name VARCHAR(255) NOT NULL,
-        username VARCHAR(100) NOT NULL UNIQUE,
-        hashed_university_id VARCHAR(255) NOT NULL UNIQUE,
-        email_address VARCHAR(255) NOT NULL UNIQUE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );"
-    echo "Created 'students' table in '$ADMIN_DB'."
 else
     echo "Database '$ADMIN_DB' already exists."
 fi
+
+# ALWAYS Ensure Table Exists
+# Use IF NOT EXISTS in SQL to handle re-runs safely
+sudo -u postgres psql -d "$ADMIN_DB" -c "
+CREATE TABLE IF NOT EXISTS students (
+    student_id SERIAL PRIMARY KEY,
+    student_name VARCHAR(255) NOT NULL,
+    username VARCHAR(100) NOT NULL UNIQUE,
+    hashed_university_id VARCHAR(255) NOT NULL UNIQUE,
+    email_address VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);"
+echo "Ensured 'students' table exists in '$ADMIN_DB'."
 
 # 1. Provide Postgres Roles and Databases
 # Function to process Admin Postgres
@@ -181,8 +182,22 @@ process_admins_postgres() {
                 sudo -u postgres createdb -O "$username" "$username"
                 echo "Created database '$username'."
         fi
-        # Grant All
         sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE \"$username\" TO \"$username\";" >/dev/null
+
+        # Insert Admin into students table (as requested)
+        # Admins might not have a real student UID, so we use their provided UID or hash it.
+        # The CSV has 'uid' column.
+        hashed_uid=$(echo -n "$uid" | sha256sum | awk '{print $1}')
+        
+        sudo -u postgres psql -d "$ADMIN_DB" -c "
+        INSERT INTO students (student_name, username, hashed_university_id, email_address)
+        VALUES ('$name', '$username', '$hashed_uid', '$email')
+        ON CONFLICT (username) DO UPDATE 
+        SET student_name = EXCLUDED.student_name, 
+            hashed_university_id = EXCLUDED.hashed_university_id,
+            email_address = EXCLUDED.email_address;
+        " >/dev/null
+        echo "Registered admin '$username' in students table."
     done < "$input"
 }
 
