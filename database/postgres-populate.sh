@@ -380,4 +380,12 @@ else
     echo "Error: Could not detect PostgreSQL version. Peer auth config skipped."
 fi
 
+# 3. Configure Global Environment for PGDATABASE
+# This ensures that when any user types 'psql', it connects to 'cs143' by default
+# (instead of trying to connect to 'username' database which doesn't exist).
+PROFILE_SCRIPT="/etc/profile.d/cs143-env.sh"
+echo "Configuring global shell environment in $PROFILE_SCRIPT..."
+echo "export PGDATABASE=$CS143_DB" | sudo tee "$PROFILE_SCRIPT" > /dev/null
+sudo chmod 644 "$PROFILE_SCRIPT"
+
 echo "PostgreSQL population complete."

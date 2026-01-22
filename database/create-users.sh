@@ -332,10 +332,6 @@ process_admins_file() {
             echo "$username:$password" | chpasswd
             if [[ $? -ne 0 ]]; then echo "Error: Password set failed for '$username'."; rollback; fi
             if [[ $? -ne 0 ]]; then echo "Error: Failed to force password expire for '$username'."; rollback; fi
-            
-            # Set Default Database for psql
-            echo "export PGDATABASE=cs143" >> "/home/$username/.bashrc"
-            
             echo "Success: Created admin user '$username'."
         else
             RET=$?
@@ -435,9 +431,6 @@ process_roster_file() {
               fi
               # Force Change
               chage -d 0 "$u"
-
-              # Set Default Database for psql
-              echo "export PGDATABASE=cs143" >> "/home/$u/.bashrc"
 
               echo "Created system user '$u'."
         else
