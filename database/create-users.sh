@@ -54,6 +54,7 @@ set_pw_config() {
 # minlen: Minimum length of 8 characters
 # minclass: Require at least 3 character classes (uppercase, lowercase, digits, special)
 # retry: Allow 3 retries
+# minlen: Minimum length of 8 characters (Strong policy for user changes)
 set_pw_config "minlen" "8"
 set_pw_config "minclass" "3"
 set_pw_config "retry" "3"
@@ -61,6 +62,37 @@ set_pw_config "retry" "3"
 # that might not pass the strict checks (e.g. simple temp passwords).
 # The users themselves will still be forced to pick strong passwords on next login.
 set_pw_config "enforce_for_root" "0"
+
+# Enable SSH Password Authentication
+# This ensures that created users can actually log in using the passwords we just set.
+SSHD_CONFIG="/etc/ssh/sshd_config"
+if [ -f "$SSHD_CONFIG" ]; then
+    echo "Enabling SSH PasswordAuthentication..."
+    # Ensure PasswordAuthentication is set to yes
+    if grep -q "^PasswordAuthentication" "$SSHD_CONFIG"; then
+        sed -i "s/^PasswordAuthentication.*/PasswordAuthentication yes/" "$SSHD_CONFIG"
+    elif grep -q "^#\?PasswordAuthentication" "$SSHD_CONFIG"; then
+        sed -i "s/^#\?PasswordAuthentication.*/PasswordAuthentication yes/" "$SSHD_CONFIG"
+    else
+        echo "PasswordAuthentication yes" >> "$SSHD_CONFIG"
+    fi
+
+    # Ensure UsePAM is yes (Critical for chage -d 0 password expiry handling)
+    if grep -q "^UsePAM" "$SSHD_CONFIG"; then
+         sed -i "s/^UsePAM.*/UsePAM yes/" "$SSHD_CONFIG"
+    else
+         echo "UsePAM yes" >> "$SSHD_CONFIG"
+    fi
+    
+    # Restart SSH service into ensure these changes take effect
+    if systemctl is-active --quiet ssh; then
+        systemctl restart ssh
+    elif systemctl is-active --quiet sshd; then
+        systemctl restart sshd
+    fi
+else
+    echo "Warning: $SSHD_CONFIG not found. Skipping SSH configuration."
+fi
 
 echo "Starting user creation process from $INPUT_FILE..."
 
@@ -89,14 +121,34 @@ rollback() {
 # || [ -n "$username" ] ensures the last line is read even if it doesn't end with a newline
 while IFS=, read -r username name password || [ -n "$username" ]; do
     
-    # Trim leading/trailing whitespace
-    username=$(echo "$username" | xargs)
-    name=$(echo "$name" | xargs)
-    password=$(echo "$password" | xargs)
+    # Trim leading/trailing whitespace and remove carriage returns (fix for Windows/DOS CSVs)
+    # xargs trims whitespace, tr -d '\r' removes the hidden return char that breaks passwords
+    username=$(echo "$username" | tr -d '\r' | xargs)
+    name=$(echo "$name" | tr -d '\r' | xargs)
+    password=$(echo "$password" | tr -d '\r' | xargs)
 
     # Skip empty lines or header lines that might look like "username,name,password"
     if [[ -z "$username" || "$username" == "username" ]]; then
         continue
+    fi
+
+    # Check if user already exists to prompt for recreation
+    if id "$username" &>/dev/null; then
+        echo -n "User '$username' already exists. Delete and recreate? [y/N] "
+        # Read from terminal/tty explicitly because stdin is the CSV
+        read -r response < /dev/tty
+        if [[ "$response" =~ ^[yY] ]]; then
+            echo "Deleting user '$username' and home directory..."
+            # userdel -r removes home dir and mail spool
+            if ! userdel -r "$username"; then
+                 echo "Error: Failed to delete user '$username'. Skipping recreation."
+                 continue
+            fi
+            # User deleted, proceed to creation below
+        else
+            echo "Skipping '$username'."
+            continue
+        fi
     fi
 
     # Attempt to add user directly (EAFP: Easier to Ask for Forgiveness than Permission)
