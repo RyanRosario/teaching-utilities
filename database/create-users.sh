@@ -134,8 +134,9 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
 
     # Check if user already exists to prompt for recreation
     if id "$username" &>/dev/null; then
-        # Log that we are asking
-        echo "User '$username' exists. prompting for recreation..."
+        # Sleep briefly to allow previous logs to flush to the terminal
+        # This prevents the prompt from being overwritten by delayed log output
+        sleep 1
         
         # Write prompt directly to TTY to bypass log buffering/redirection
         echo -n "User '$username' already exists. Delete and recreate? [y/N] " > /dev/tty

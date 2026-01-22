@@ -3,17 +3,40 @@
 # Exit on any error
 set -e
 
+# Parse arguments
+PURGE_DATA=false
+if [[ "$1" == "--purge-data" ]]; then
+    PURGE_DATA=true
+fi
+
 echo "Starting PostgreSQL installation and configuration..."
 
 # 0. Clean Reinstall Logic
 if dpkg -l | grep -qw postgresql; then
-    echo "Existing PostgreSQL installation detected. Removing and purging..."
+    echo "Existing PostgreSQL installation detected. Removing..."
+
+    # Preconfigure debconf to avoid interactive prompt "Remove PostgreSQL directories when package is purged?"
+    if [ "$PURGE_DATA" = true ]; then
+        echo "postgresql-common postgresql-common/obsolete-major boolean true" | sudo debconf-set-selections
+    else
+        echo "postgresql-common postgresql-common/obsolete-major boolean false" | sudo debconf-set-selections
+    fi
+
     sudo systemctl stop postgresql || true
-    sudo apt-get purge -y postgresql*
+    
+    # Run purge non-interactively
+    sudo DEBIAN_FRONTEND=noninteractive apt-get purge -y postgresql*
     sudo apt-get autoremove -y
-    # Ensure a completely fresh state by removing data and config directories
-    sudo rm -rf /etc/postgresql /var/lib/postgresql /var/log/postgresql
-    echo "PostgreSQL removed. Proceeding with fresh installation..."
+
+    # Only manually remove data directories if explicitly requested
+    if [ "$PURGE_DATA" = true ]; then
+        echo "Purging data directories as requested..."
+        sudo rm -rf /etc/postgresql /var/lib/postgresql /var/log/postgresql
+    else
+        echo "Preserving /var/lib/postgresql and config directories (pass --purge-data to remove)."
+    fi
+
+    echo "PostgreSQL removed (reinstalling fresh)..."
 fi
 
 # 1. Update system and add PostgreSQL Global Development Group (PGDG) repository
@@ -108,8 +131,15 @@ fi
 # 8. Restart PostgreSQL to apply changes
 sudo systemctl restart postgresql
 
+# 9. Install Google Cloud Ops Agent (for GCE Logging)
+echo "Installing Google Cloud Ops Agent..."
+curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+sudo bash add-google-cloud-ops-agent-repo.sh --also-install
+
+
 echo "-----------------------------------------------------"
 echo "PostgreSQL $PG_VERSION Installation & Configuration Complete"
 echo "pgaudit is installed and enabled."
+echo "Google Cloud Ops Agent is installed."
 echo "Server is listening on *"
 echo "-----------------------------------------------------"
