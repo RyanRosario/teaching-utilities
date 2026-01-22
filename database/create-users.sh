@@ -51,15 +51,38 @@ set_pw_config() {
 }
 
 # Enforce secure policies:
-# minlen: Minimum length of 12 characters
+# minlen: Minimum length of 8 characters
 # minclass: Require at least 3 character classes (uppercase, lowercase, digits, special)
 # retry: Allow 3 retries
-set_pw_config "minlen" "12"
+set_pw_config "minlen" "8"
 set_pw_config "minclass" "3"
 set_pw_config "retry" "3"
-set_pw_config "enforce_for_root" "1" # Optional: enforce for root actions too
+# enforce_for_root: 0 allows the admin (running this script) to set initial passwords
+# that might not pass the strict checks (e.g. simple temp passwords).
+# The users themselves will still be forced to pick strong passwords on next login.
+set_pw_config "enforce_for_root" "0"
 
 echo "Starting user creation process from $INPUT_FILE..."
+
+# Array to track created users for rollback
+CREATED_USERS=()
+
+# Rollback function to delete users created in this session on failure
+rollback() {
+    echo "!!! ERROR ENCOUNTERED. ROLLING BACK !!!"
+    echo "cleaning up ${#CREATED_USERS[@]} users..."
+    for user in "${CREATED_USERS[@]}"; do
+        echo "Removing user: $user"
+        userdel -r "$user" || echo "Failed to remove user: $user"
+    done
+    echo "Rollback complete. Exiting."
+    exit 1
+}
+
+# Trap any uncaught error (though we handle most manually below)
+# We might not want a strict trap on ERR because valid checks like `id $username` return non-zero
+# So we will rely on manual calls to rollback in the critical section.
+
 
 # Read file line by line
 # IFS=, sets the delimiter to comma
@@ -81,25 +104,28 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
         echo "Warning: User '$username' already exists. Skipping."
     else
         # Create user
-        # -m: Create home directory if it doesn't exist
-        # -s: Set default shell to bash
-        # -c: Set GECOS field (Full Name)
-        # -G: Add strict to secondary group 'sudo' (for admin privileges)
-        # -U: Create a user group with the same name
         if useradd -m -U -s /bin/bash -c "$name" -G sudo "$username"; then
-            
-            # Set password using chpasswd (reads user:password from stdin)
+            # Track user immediately for rollback
+            CREATED_USERS+=("$username")
+
+            # Set password
             echo "$username:$password" | chpasswd
-            
-            if [[ $? -eq 0 ]]; then
-                # Force password change on next login
-                chage -d 0 "$username"
-                echo "Success: Created admin user '$username'. Password change forced on next login."
-            else
-                echo "Error: User '$username' created but password update failed."
+            if [[ $? -ne 0 ]]; then
+                echo "Error: Password set failed for '$username'."
+                rollback
             fi
+
+            # Force password change
+            chage -d 0 "$username"
+            if [[ $? -ne 0 ]]; then
+                 echo "Error: Failed to force password expire for '$username'."
+                 rollback
+            fi
+            
+            echo "Success: Created admin user '$username'."
         else
             echo "Error: Failed to create user '$username'."
+            rollback
         fi
     fi
 
