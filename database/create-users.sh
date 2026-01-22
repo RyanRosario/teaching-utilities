@@ -99,33 +99,39 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
         continue
     fi
 
-    # Check if user already exists
-    if id "$username" &>/dev/null; then
-        echo "Warning: User '$username' already exists. Skipping."
-    else
-        # Create user
-        if useradd -m -U -s /bin/bash -c "$name" -G sudo "$username"; then
-            # Track user immediately for rollback
-            CREATED_USERS+=("$username")
+    # Attempt to add user directly (EAFP: Easier to Ask for Forgiveness than Permission)
+    # capturing output to handle errors cleanly
+    if output=$(useradd -m -U -s /bin/bash -c "$name" -G sudo "$username" 2>&1); then
+        # Success (Exit code 0)
+        # Track user immediately for rollback
+        CREATED_USERS+=("$username")
 
-            # Set password
-            echo "$username:$password" | chpasswd
-            if [[ $? -ne 0 ]]; then
-                echo "Error: Password set failed for '$username'."
-                rollback
-            fi
-
-            # Force password change
-            chage -d 0 "$username"
-            if [[ $? -ne 0 ]]; then
-                 echo "Error: Failed to force password expire for '$username'."
-                 rollback
-            fi
-            
-            echo "Success: Created admin user '$username'."
-        else
-            echo "Error: Failed to create user '$username'."
+        # Set password
+        echo "$username:$password" | chpasswd
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Password set failed for '$username'."
             rollback
+        fi
+
+        # Force password change
+        chage -d 0 "$username"
+        if [[ $? -ne 0 ]]; then
+             echo "Error: Failed to force password expire for '$username'."
+             rollback
+        fi
+        
+        echo "Success: Created admin user '$username'."
+
+    else
+        # useradd failed, check exit code
+        RET=$?
+        if [[ $RET -eq 9 ]]; then
+             # Exit code 9 = username already in use
+             echo "Warning: User '$username' already exists (useradd code 9). Skipping."
+        else
+             # Genuine error
+             echo "Error: Failed to create user '$username'. Output: $output"
+             rollback
         fi
     fi
 
