@@ -127,7 +127,8 @@ rollback() {
 # Read file line by line
 # IFS=, sets the delimiter to comma
 # || [ -n "$username" ] ensures the last line is read even if it doesn't end with a newline
-while IFS=, read -r username name password || [ -n "$username" ]; do
+# Parsing 5 columns: username,name,password,uid,email
+while IFS=, read -r username name password uid email || [ -n "$username" ]; do
     
     # Trim leading/trailing whitespace and remove carriage returns (fix for Windows/DOS CSVs)
     # xargs trims whitespace, tr -d '\r' removes the hidden return char that breaks passwords
