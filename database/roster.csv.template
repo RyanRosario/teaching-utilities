@@ -1,0 +1,4 @@
+UID,Name,"E-mail",Major,Classification,UsernameOverride
+123-456-789,"Doe, John",jdoe@university.edu,Computer Science,Senior,
+987-654-321,"Smith, Jane",jsmith@university.edu,Mathematics,Junior,jane_s
+456-789-123,"Collision, User",collision@university.edu,Physics,Freshman,
