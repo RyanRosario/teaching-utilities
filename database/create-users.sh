@@ -20,6 +20,45 @@ if [[ ! -f "$INPUT_FILE" ]]; then
     exit 1
 fi
 
+LOG_FILE="create-users.log"
+# Redirect all output to log file and syslog
+# logger -s sends the message to standard error as well as to the system log
+exec > >(tee -a "$LOG_FILE" | logger -t create-users -s) 2>&1
+
+
+# Install libpam-pwquality for password complexity enforcement
+# This ensures that when users change their password (enforced below), they must pick a strong one.
+if ! dpkg -s libpam-pwquality >/dev/null 2>&1; then
+    echo "Installing libpam-pwquality..."
+    apt-get update && apt-get install -y libpam-pwquality
+fi
+
+# Configure Password Quality (System-wide)
+# modifying /etc/security/pwquality.conf
+PW_CONF="/etc/security/pwquality.conf"
+
+echo "Configuring secure password requirements in $PW_CONF..."
+
+# Function to ensure a config key-value pair exists
+set_pw_config() {
+    local key=$1
+    local value=$2
+    if grep -q "^#\?${key}\s*=" "$PW_CONF"; then
+        sed -i "s/^#\?${key}\s*=.*$/${key} = ${value}/" "$PW_CONF"
+    else
+        echo "${key} = ${value}" >> "$PW_CONF"
+    fi
+}
+
+# Enforce secure policies:
+# minlen: Minimum length of 12 characters
+# minclass: Require at least 3 character classes (uppercase, lowercase, digits, special)
+# retry: Allow 3 retries
+set_pw_config "minlen" "12"
+set_pw_config "minclass" "3"
+set_pw_config "retry" "3"
+set_pw_config "enforce_for_root" "1" # Optional: enforce for root actions too
+
 echo "Starting user creation process from $INPUT_FILE..."
 
 # Read file line by line
@@ -53,7 +92,9 @@ while IFS=, read -r username name password || [ -n "$username" ]; do
             echo "$username:$password" | chpasswd
             
             if [[ $? -eq 0 ]]; then
-                echo "Success: Created admin user '$username'."
+                # Force password change on next login
+                chage -d 0 "$username"
+                echo "Success: Created admin user '$username'. Password change forced on next login."
             else
                 echo "Error: User '$username' created but password update failed."
             fi
