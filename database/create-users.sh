@@ -29,7 +29,7 @@ fi
 LOG_FILE="create-users.log"
 # Redirect all output to log file and syslog
 # logger -s sends the message to standard error as well as to the system log
-exec > >(tee -a "$LOG_FILE" | logger -t create-users -s) 2>&1
+exec > >(tee -a "$LOG_FILE" >(logger -t create-users)) 2>&1
 
 
 # Install libpam-pwquality for password complexity enforcement
@@ -63,10 +63,11 @@ set_pw_config "enforce_for_root" "0"
 
 # Note: We do NOT set minlen/minclass yet. If they are already set in the file from a previous run,
 # we might need to relax them temporarily if the initial passwords in CSV are weak.
-# However, enforce_for_root=0 usually bypasses this for root. 
-# But just in case, let's relax them now to ensure the script succeeds, and tighten them at the end.
+# dictionary check can also fail even if len is 1 (e.g. if password is a word).
+# enforcing=0 should stop the module from rejecting the password even if checks fail.
 set_pw_config "minlen" "1"
 set_pw_config "minclass" "1"
+set_pw_config "enforcing" "0"
 
 # Enable SSH Password Authentication
 # This ensures that created users can actually log in using the passwords we just set.
@@ -199,5 +200,6 @@ echo "Enforcing strict password policies (min 8 chars, 3 classes) for future cha
 set_pw_config "minlen" "8"
 set_pw_config "minclass" "3"
 set_pw_config "retry" "3"
+set_pw_config "enforcing" "1"
 
 echo "User creation process complete."
