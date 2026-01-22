@@ -20,12 +20,51 @@ ROSTER_FILE=""
 # Or just assume $1=Admin, $2=Roster as per 'create-users.sh' interface expectation.
 
 for arg in "$@"; do
-    if [[ -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
+    if [[ "$arg" == "--add-admin" ]]; then
+        MODE="interactive_admin"
+    elif [[ "$arg" == "--add-student" ]]; then
+        MODE="interactive_student"
+    elif [[ -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
         ADMIN_FILE="$arg"
     elif [[ -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
         ROSTER_FILE="$arg"
     fi
 done
+
+if [[ "$MODE" == "interactive_admin" ]]; then
+     # For Postgres Admin process, we only strictly need the username to exist in system.
+     # But the csv parser expects: username,name,password,uid,email
+     read -rp "Enter Admin Username (must exist in system): " u
+     
+     t=$(mktemp)
+     # Dummy fillers for non-postgres fields
+     echo "$u,Interactive Admin,pass,0,email@local" > "$t"
+     process_admins_postgres "$t"
+     rm "$t"
+     exit 0 # We assume they might want to run peer-auth setup? 
+            # Actually peer auth setup is global. We should probably let it run or duplicate it?
+            # Let's let it run if we want full setup, OR just exit. 
+            # Usually populate is for users.
+            # But the script ends with peer auth config.
+            # Let's just run the function and maybe fall through? 
+            # The structure of the script defaults to "if variables are set". 
+            # If we exit here, peer auth won't double-check. 
+            # Let's exit, assuming peer auth is a one-time setup.
+     exit 0
+
+elif [[ "$MODE" == "interactive_student" ]]; then
+     read -rp "Enter Student UID (NNN-NNN-NNN): " i
+     read -rp "Enter Last Name: " l
+     read -rp "Enter First Name: " f
+     read -rp "Enter Email: " e
+     
+     t=$(mktemp)
+     # Format: UID, "Last, First", Email...
+     echo "$i,\"$l, $f\",$e,INT,MODE,," > "$t"
+     process_roster_postgres "$t"
+     rm "$t"
+     exit 0
+fi
 
 if [[ -z "$ADMIN_FILE" && -z "$ROSTER_FILE" ]]; then
     echo "Usage: $0 <path_to_admin_csv> [path_to_roster_csv]"

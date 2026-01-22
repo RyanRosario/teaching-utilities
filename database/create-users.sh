@@ -16,12 +16,43 @@ RECREATE=false
 for arg in "$@"; do
     if [[ "$arg" == "--recreate" ]]; then
         RECREATE=true
+    elif [[ "$arg" == "--add-admin" ]]; then
+        MODE="interactive_admin"
+    elif [[ "$arg" == "--add-student" ]]; then
+        MODE="interactive_student"
     elif [[ -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
         ADMIN_FILE="$arg"
     elif [[ -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
         ROSTER_FILE="$arg"
     fi
 done
+
+if [[ "$MODE" == "interactive_admin" ]]; then
+     read -rp "Enter Admin Username: " u
+     read -rp "Enter Real Name: " n
+     read -s -rp "Enter Initial Password: " p; echo
+     read -rp "Enter UID: " i
+     read -rp "Enter Email: " e
+     
+     # Create temp file
+     t=$(mktemp)
+     echo "$u,$n,$p,$i,$e" > "$t"
+     process_admins_file "$t"
+     rm "$t"
+     exit 0
+elif [[ "$MODE" == "interactive_student" ]]; then
+     read -rp "Enter Student UID (NNN-NNN-NNN): " i
+     read -rp "Enter Last Name: " l
+     read -rp "Enter First Name: " f
+     read -rp "Enter Email: " e
+     
+     # Create temp CSV matching roster format: UID, "Last, First", Email...
+     t=$(mktemp)
+     echo "$i,\"$l, $f\",$e,INTERACTIVE,MODE,," > "$t"
+     process_roster_file "$t"
+     rm "$t"
+     exit 0
+fi
 
 if [[ -z "$ADMIN_FILE" ]]; then
     # At least one file is usually expected, but technically we could support optional.
