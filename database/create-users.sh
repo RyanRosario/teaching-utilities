@@ -65,9 +65,11 @@ set_pw_config "enforce_for_root" "0"
 # we might need to relax them temporarily if the initial passwords in CSV are weak.
 # dictionary check can also fail even if len is 1 (e.g. if password is a word).
 # enforcing=0 should stop the module from rejecting the password even if checks fail.
+# dictcheck=0 stops the module from even performing the dictionary check (silencing the warning).
 set_pw_config "minlen" "1"
 set_pw_config "minclass" "1"
 set_pw_config "enforcing" "0"
+set_pw_config "dictcheck" "0"
 
 # Enable SSH Password Authentication
 # This ensures that created users can actually log in using the passwords we just set.
@@ -201,5 +203,6 @@ set_pw_config "minlen" "8"
 set_pw_config "minclass" "3"
 set_pw_config "retry" "3"
 set_pw_config "enforcing" "1"
+set_pw_config "dictcheck" "1"
 
 echo "User creation process complete."
