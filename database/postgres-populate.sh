@@ -326,7 +326,7 @@ process_roster_postgres() {
                sudo -u postgres psql -d "$CS143_DB" -c "REVOKE ALL ON SCHEMA \"$username\" FROM PUBLIC;" >/dev/null
                
                # Set search_path so they land in their schema by default
-               sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\";" >/dev/null
+               sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
                
                echo "Created private schema '$username' in '$CS143_DB'."
         fi
