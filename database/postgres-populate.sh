@@ -222,6 +222,10 @@ process_admins_postgres() {
         sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
         echo "Created admin workspace schema '$username' in '$CS143_DB'."
 
+        # Ensure tables created by this Admin in PUBLIC are readable by everyone (Students)
+        sudo -u postgres psql -d "$CS143_DB" -c "ALTER DEFAULT PRIVILEGES FOR ROLE \"$username\" IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC;" >/dev/null
+        echo "Configured default privileges for Admin '$username' (Public tables will be readable)."
+
         # Insert Admin into students table (as requested)
         # Admins might not have a real student UID, so we use their provided UID or hash it.
         # The CSV has 'uid' column.
