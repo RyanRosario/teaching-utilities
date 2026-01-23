@@ -225,7 +225,7 @@ process_admins_postgres() {
         # Admins have full access anyway (Superuser), but this gives them a personal workspace.
         sudo -u postgres psql -d "$CS143_DB" -c "CREATE SCHEMA IF NOT EXISTS \"$username\" AUTHORIZATION \"$username\";" >/dev/null
         # Set search_path for Admin to default to their schema
-        sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
+        sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO public, \"$username\";" >/dev/null
         echo "Created admin workspace schema '$username' in '$CS143_DB'."
 
         # Ensure tables created by this Admin in PUBLIC are readable by everyone (Students)
