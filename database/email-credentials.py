@@ -108,15 +108,11 @@ def main():
         parents=[conf_parser] # Include the --config arg in help
     )
     
-    # helper to check if key is in defaults to avoid 'required=True' if it is provided in config
-    def required_if_missing(key):
-        return key not in defaults
-
-    parser.add_argument('--smtp-host', required=required_if_missing('smtp_host'), help='SMTP server hostname')
+    parser.add_argument('--smtp-host', help='SMTP server hostname')
     parser.add_argument('--smtp-port', type=int, help='SMTP port (default: 587)')
-    parser.add_argument('--smtp-user', required=required_if_missing('smtp_user'), help='SMTP username')
-    parser.add_argument('--smtp-password', required=required_if_missing('smtp_password'), help='SMTP password')
-    parser.add_argument('--from-addr', required=required_if_missing('from_addr'), help='From address')
+    parser.add_argument('--smtp-user', help='SMTP username')
+    parser.add_argument('--smtp-password', help='SMTP password')
+    parser.add_argument('--from-addr', help='From address')
     parser.add_argument('--subject', help='Email subject')
     parser.add_argument('--dry-run', action='store_true', help='Print emails without sending')
     parser.add_argument('--test-email', help='Send all emails to this address (testing)')
@@ -129,6 +125,14 @@ def main():
     parser.set_defaults(**defaults)
     
     args = parser.parse_args(remaining_argv)
+    
+    # 4. Manual Validation
+    required_args = ['smtp_host', 'smtp_user', 'smtp_password', 'from_addr']
+    missing_args = [arg for arg in required_args if getattr(args, arg) is None]
+    
+    if missing_args:
+        parser.error(f"Missing required arguments: {', '.join('--' + a.replace('_', '-') for a in missing_args)}")
+
     
     # Connect to PostgreSQL
     print("Connecting to PostgreSQL...")
