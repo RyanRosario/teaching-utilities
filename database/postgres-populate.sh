@@ -152,6 +152,12 @@ else
     echo "Database '$CS143_DB' already exists."
 fi
 
+# 0.5.1 Configure Global Search Path for CS143_DB
+# This ensures that ALL users connecting to this DB defaults to "$user", public
+# This is a fallback if the Role-level search_path is missing or reset.
+sudo -u postgres psql -c "ALTER DATABASE \"$CS143_DB\" SET search_path TO \"\$user\", public;" >/dev/null
+echo "Configured global search_path for '$CS143_DB' to '\"\$user\", public'."
+
 # 0.6 Setup Exam Databases (midterm, final) - Admin Only
 for db in "midterm" "final"; do
     if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
@@ -393,5 +399,13 @@ PROFILE_SCRIPT="/etc/profile.d/cs143-env.sh"
 echo "Configuring global shell environment in $PROFILE_SCRIPT..."
 echo "export PGDATABASE=$CS143_DB" | sudo tee "$PROFILE_SCRIPT" > /dev/null
 sudo chmod 644 "$PROFILE_SCRIPT"
+
+
+
+# 4. Final Permission Refresh
+# Ensure ANY existing tables in public (created by anyone) are readable.
+echo "Refreshing usage/select permissions on public schema..."
+sudo -u postgres psql -d "$CS143_DB" -c "GRANT USAGE ON SCHEMA public TO PUBLIC;"
+sudo -u postgres psql -d "$CS143_DB" -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO PUBLIC;"
 
 echo "PostgreSQL population complete."
