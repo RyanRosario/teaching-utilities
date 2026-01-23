@@ -58,6 +58,7 @@ fi
 sudo apt-get update
 # 'postgresql' metapackage always points to the latest supported version in the repo
 sudo apt-get install -y postgresql postgresql-contrib git finger
+sudo apt-get install -y libpq-dev
 
 # 3. Dynamic Version Detection
 # We need to know the version to find the config files and install the right pgaudit plugin
