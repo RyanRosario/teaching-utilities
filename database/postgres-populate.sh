@@ -329,11 +329,13 @@ process_roster_postgres() {
                # Isolate it: No one else can usage/create in this schema
                sudo -u postgres psql -d "$CS143_DB" -c "REVOKE ALL ON SCHEMA \"$username\" FROM PUBLIC;" >/dev/null
                
-               # Set search_path so they land in their schema by default
-               sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
+
                
                echo "Created private schema '$username' in '$CS143_DB'."
         fi
+        
+        # Set search_path so they land in their schema by default (Apply to ALL students, existing or new)
+        sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
 
         # C. Insert into admin.students (Registry is still in ADMIN_DB)
         hashed_uid=$(echo -n "$raw_uid" | sha256sum | awk '{print $1}')
