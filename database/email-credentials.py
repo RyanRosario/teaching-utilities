@@ -24,11 +24,12 @@ import smtplib
 import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import MySQLdb
+import psycopg2
+import psycopg2.extras
 import time
 import random
 
-def generate_email_body(name, username, password):
+def generate_email_body(name, username):
     """Generate personalized email body"""
     return f"""Hello {name.split(',')[1]},
 
@@ -79,45 +80,42 @@ def main():
     parser.add_argument('--subject', default='Your Course Login Credentials', help='Email subject')
     parser.add_argument('--dry-run', action='store_true', help='Print emails without sending')
     parser.add_argument('--test-email', help='Send all emails to this address (testing)')
-    parser.add_argument('--db-host', default='localhost', help='MySQL host (default: localhost)')
-    parser.add_argument('--db-port', type=int, default=3306, help='MySQL port (default: 3306)')
-    parser.add_argument('--db-user', default='root', help='MySQL user (default: root)')
-    parser.add_argument('--db-password', help='MySQL password')
-    parser.add_argument('--db-socket', help='MySQL socket path')
+    parser.add_argument('--db-host', default='localhost', help='PostgreSQL host (default: localhost)')
+    parser.add_argument('--db-port', type=int, default=5432, help='PostgreSQL port (default: 5432)')
+    parser.add_argument('--db-user', default='ryan', help='PostgreSQL user (default: ryan)')
+    parser.add_argument('--db-password', default='6j5t6dqm$', help='PostgreSQL password')
+    parser.add_argument('--db-socket', help='PostgreSQL socket path')
     
     args = parser.parse_args()
     
-    # Connect to MySQL
-    print("Connecting to MySQL...")
+    # Connect to PostgreSQL
+    print("Connecting to PostgreSQL...")
     db_kwargs = {
         'user': args.db_user,
-        'db': 'admin'
+        'dbname': 'admin', # Using 'admin' database as requested
+        'password': args.db_password,
+        'host': args.db_host,
+        'port': args.db_port
     }
     
-    if args.db_password:
-        db_kwargs['passwd'] = args.db_password
-    
     if args.db_socket:
-        db_kwargs['unix_socket'] = args.db_socket
-    else:
-        db_kwargs['host'] = args.db_host
-        db_kwargs['port'] = args.db_port
+        # psycopg2 uses 'host' for unix socket directory if it starts with /
+        db_kwargs['host'] = args.db_socket
     
     try:
-        db = MySQLdb.connect(**db_kwargs)
+        db = psycopg2.connect(**db_kwargs)
         cursor = db.cursor()
     except Exception as e:
         print(f"ERROR: Failed to connect to database: {e}")
         return 1
     
-    # Query students with AES_DECRYPT in SQL
+    # Query students from public.students
     query = """
         SELECT 
-            CAST(AES_DECRYPT(UNHEX(hashed_university_id), '5549829') AS CHAR) as decrypted_uid,
             student_name, 
             email_address, 
             username 
-        FROM student 
+        FROM public.students 
         WHERE email_address IS NOT NULL AND email_address != ''
     """
     cursor.execute(query)
@@ -125,17 +123,15 @@ def main():
     
     students = []
     for row in rows:
-        uid, name, email, username = row
-        if not all([uid, name, email, username]):
+        name, email, username = row
+        if not all([name, email, username]):
             print(f"WARNING: Skipping incomplete row: {row}")
             continue
         
-        password = str(uid).replace('-', '')
         students.append({
             'name': name,
             'email': email,
-            'username': username,
-            'password': password
+            'username': username
         })
     
     cursor.close()
@@ -155,7 +151,7 @@ def main():
     # Send emails
     sent_count = 0
     for student in students:
-        body = generate_email_body(student['name'], student['username'], student['password'])
+        body = generate_email_body(student['name'], student['username'])
         to_addr = args.test_email if args.test_email else student['email']
         
         if args.dry_run:
