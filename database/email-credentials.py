@@ -21,6 +21,8 @@ Options:
 """
 
 import smtplib
+import json
+import os
 import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -67,26 +69,66 @@ def send_email(smtp_conn, from_addr, to_addr, subject, body):
     msg.attach(MIMEText(body, 'plain'))
     
     smtp_conn.send_message(msg)
-    time.sleep(random.randint(50, 65))
+    time.sleep(10)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Email credentials to students')
-    parser.add_argument('--smtp-host', required=True, help='SMTP server hostname')
-    parser.add_argument('--smtp-port', type=int, default=587, help='SMTP port (default: 587)')
-    parser.add_argument('--smtp-user', required=True, help='SMTP username')
-    parser.add_argument('--smtp-password', required=True, help='SMTP password')
-    parser.add_argument('--from-addr', required=True, help='From address (e.g. "Admin <admin@example.com>")')
-    parser.add_argument('--subject', default='Your Course Login Credentials', help='Email subject')
+    # 1. First pass: Check for --config argument only
+    conf_parser = argparse.ArgumentParser(add_help=False)
+    conf_parser.add_argument('--config', help='Path to JSON configuration file')
+    args, remaining_argv = conf_parser.parse_known_args()
+
+    # 2. Load defaults from config file if specified
+    defaults = {
+        'smtp_port': 587,
+        'db_host': 'localhost',
+        'db_port': 5432,
+        'db_user': 'ryan',
+        'db_password': '6j5t6dqm$',
+        'subject': 'Your Course Login Credentials'
+    }
+
+    if args.config:
+        if os.path.exists(args.config):
+            print(f"Loading configuration from {args.config}...")
+            try:
+                with open(args.config, 'r') as f:
+                    config_data = json.load(f)
+                    defaults.update(config_data)
+            except Exception as e:
+                print(f"Error loading config file: {e}")
+                return 1
+        else:
+            print(f"Error: Config file '{args.config}' not found.")
+            return 1
+
+    # 3. Main parser with defaults from config
+    parser = argparse.ArgumentParser(
+        description='Email credentials to students',
+        parents=[conf_parser] # Include the --config arg in help
+    )
+    
+    # helper to check if key is in defaults to avoid 'required=True' if it is provided in config
+    def required_if_missing(key):
+        return key not in defaults
+
+    parser.add_argument('--smtp-host', required=required_if_missing('smtp_host'), help='SMTP server hostname')
+    parser.add_argument('--smtp-port', type=int, help='SMTP port (default: 587)')
+    parser.add_argument('--smtp-user', required=required_if_missing('smtp_user'), help='SMTP username')
+    parser.add_argument('--smtp-password', required=required_if_missing('smtp_password'), help='SMTP password')
+    parser.add_argument('--from-addr', required=required_if_missing('from_addr'), help='From address')
+    parser.add_argument('--subject', help='Email subject')
     parser.add_argument('--dry-run', action='store_true', help='Print emails without sending')
     parser.add_argument('--test-email', help='Send all emails to this address (testing)')
-    parser.add_argument('--db-host', default='localhost', help='PostgreSQL host (default: localhost)')
-    parser.add_argument('--db-port', type=int, default=5432, help='PostgreSQL port (default: 5432)')
-    parser.add_argument('--db-user', default='ryan', help='PostgreSQL user (default: ryan)')
-    parser.add_argument('--db-password', default='6j5t6dqm$', help='PostgreSQL password')
+    parser.add_argument('--db-host', help='PostgreSQL host (default: localhost)')
+    parser.add_argument('--db-port', type=int, help='PostgreSQL port (default: 5432)')
+    parser.add_argument('--db-user', help='PostgreSQL user (default: ryan)')
+    parser.add_argument('--db-password', help='PostgreSQL password')
     parser.add_argument('--db-socket', help='PostgreSQL socket path')
     
-    args = parser.parse_args()
+    parser.set_defaults(**defaults)
+    
+    args = parser.parse_args(remaining_argv)
     
     # Connect to PostgreSQL
     print("Connecting to PostgreSQL...")
