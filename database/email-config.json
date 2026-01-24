@@ -9,5 +9,7 @@
     "db_user": "",
     "db_password": "",
     "db_name": "admin",
-    "subject": ""
+    "subject": "",
+    "test_email": "",
+    "dry_run": false
 }

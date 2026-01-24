@@ -99,6 +99,12 @@ def main():
     config.setdefault('db_port', 5432)
     config.setdefault('db_name', 'admin')
     config.setdefault('subject', 'Your Course Login Credentials')
+    config.setdefault('test_email', '')
+    config.setdefault('dry_run', False)
+    
+    # CLI args override config file
+    dry_run = args.dry_run or config.get('dry_run', False)
+    test_email = args.test_email or config.get('test_email', '') or None
     
     # Connect to PostgreSQL
     print("Connecting to PostgreSQL...")
@@ -149,7 +155,7 @@ def main():
     
     # Connect to SMTP (skip if dry-run)
     smtp_conn = None
-    if not args.dry_run:
+    if not dry_run:
         print(f"Connecting to {config['smtp_host']}:{config['smtp_port']}...")
         smtp_conn = smtplib.SMTP(config['smtp_host'], config['smtp_port'])
         smtp_conn.starttls()
@@ -160,9 +166,9 @@ def main():
     sent_count = 0
     for student in students:
         body = generate_email_body(student['name'], student['username'])
-        to_addr = args.test_email if args.test_email else student['email']
+        to_addr = test_email if test_email else student['email']
         
-        if args.dry_run:
+        if dry_run:
             print(f"\n{'='*70}")
             print(f"To: {to_addr}")
             print(f"Subject: {config['subject']}")
