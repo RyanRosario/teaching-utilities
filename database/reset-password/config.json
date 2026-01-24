@@ -1,0 +1,23 @@
+{
+  "courseName": "",
+  "appUrl": "",
+  "port": 3000,
+  "email": {
+    "host": "mail.cs.ucla.edu",
+    "port": 587,
+    "secure": false,
+    "auth": {
+      "user": "",
+      "pass": ""
+    },
+    "from": ""
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "user": "",
+    "password": "",
+    "database": "",
+    "ssl": false
+  }
+}
