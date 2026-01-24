@@ -79,7 +79,7 @@ router.post('/request', async (req, res) => {
             `
         });
 
-        res.json({ message: 'Reset instructions sent to your email' });
+        res.json({ message: 'Reset instructions sent to your email if your username exists' });
 
     } catch (error) {
         console.error('Reset request error:', error);
