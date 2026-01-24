@@ -60,6 +60,35 @@ sudo apt-get update
 sudo apt-get install -y postgresql postgresql-contrib git finger
 sudo apt-get install -y libpq-dev
 
+# 2.5 Install Latest Node.js (via NodeSource)
+echo "Installing Node.js..."
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt-get install -y nodejs
+echo "Installed Node.js version: $(node --version)"
+
+# 2.6 Install Nginx
+echo "Installing Nginx..."
+sudo apt-get install -y nginx
+sudo systemctl enable nginx
+echo "Nginx installed and enabled."
+
+# 2.7 Configure Nginx for Password Reset App
+if [ -f /opt/reset-password/nginx-sample.conf ]; then
+    echo "Configuring Nginx for password reset app..."
+    sudo cp /opt/reset-password/nginx-sample.conf /etc/nginx/sites-available/reset-password
+    sudo ln -sf /etc/nginx/sites-available/reset-password /etc/nginx/sites-enabled/
+    sudo rm -f /etc/nginx/sites-enabled/default
+    sudo nginx -t && sudo systemctl reload nginx
+    echo "Nginx configured for password reset app."
+else
+    echo "Note: /opt/reset-password/nginx-sample.conf not found. Skipping nginx site configuration."
+fi
+
+# 2.8 Install Certbot for SSL Certificates
+echo "Installing Certbot..."
+sudo apt-get install -y certbot python3-certbot-nginx
+echo "Certbot installed. Run 'sudo certbot --nginx -d YOUR_DOMAIN' to obtain SSL certificate."
+
 # 3. Dynamic Version Detection
 # We need to know the version to find the config files and install the right pgaudit plugin
 PG_VERSION=$(ls /etc/postgresql/ | sort -V | tail -n 1)
@@ -137,10 +166,90 @@ echo "Installing Google Cloud Ops Agent..."
 curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
 sudo bash add-google-cloud-ops-agent-repo.sh --also-install
 
+# 10. Configure Log Retention (100 Days)
+echo "Configuring log retention for 100 days..."
+
+# 10.1 Configure journald for persistent storage and 100-day retention
+sudo mkdir -p /var/log/journal
+cat <<EOF | sudo tee /etc/systemd/journald.conf.d/retention.conf
+[Journal]
+Storage=persistent
+MaxRetentionSec=100d
+MaxFileSec=1d
+EOF
+sudo systemctl restart systemd-journald
+echo "Journald configured for 100-day retention."
+
+# 10.2 Configure rsyslog logrotate (auth.log, syslog)
+cat <<EOF | sudo tee /etc/logrotate.d/rsyslog-100days
+/var/log/syslog
+/var/log/auth.log
+{
+    rotate 100
+    daily
+    missingok
+    notifempty
+    delaycompress
+    compress
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}
+EOF
+echo "Rsyslog (auth.log, syslog) configured for 100-day retention."
+
+# 10.3 Configure nginx logrotate
+cat <<EOF | sudo tee /etc/logrotate.d/nginx
+/var/log/nginx/*.log {
+    daily
+    rotate 100
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        [ -f /var/run/nginx.pid ] && kill -USR1 \$(cat /var/run/nginx.pid)
+    endscript
+}
+EOF
+echo "Nginx logs configured for 100-day retention."
+
+# 10.4 Configure PostgreSQL logging
+sudo -u postgres psql -c "ALTER SYSTEM SET logging_collector = 'on';"
+sudo -u postgres psql -c "ALTER SYSTEM SET log_directory = 'log';"
+sudo -u postgres psql -c "ALTER SYSTEM SET log_filename = 'postgresql-%Y-%m-%d.log';"
+sudo -u postgres psql -c "ALTER SYSTEM SET log_rotation_age = '1d';"
+sudo -u postgres psql -c "ALTER SYSTEM SET log_rotation_size = '0';"
+sudo -u postgres psql -c "ALTER SYSTEM SET log_statement = 'all';"
+sudo -u postgres psql -c "ALTER SYSTEM SET log_connections = 'on';"
+sudo -u postgres psql -c "ALTER SYSTEM SET log_disconnections = 'on';"
+
+# Create PostgreSQL log directory
+sudo mkdir -p /var/lib/postgresql/$PG_VERSION/main/log
+sudo chown postgres:postgres /var/lib/postgresql/$PG_VERSION/main/log
+
+# PostgreSQL logrotate
+cat <<EOF | sudo tee /etc/logrotate.d/postgresql
+/var/lib/postgresql/*/main/log/*.log {
+    daily
+    rotate 100
+    missingok
+    notifempty
+    compress
+    delaycompress
+    su postgres postgres
+}
+EOF
+echo "PostgreSQL logs configured for 100-day retention."
+
+# Restart PostgreSQL to apply logging changes
+sudo systemctl restart postgresql
 
 echo "-----------------------------------------------------"
 echo "PostgreSQL $PG_VERSION Installation & Configuration Complete"
 echo "pgaudit is installed and enabled."
 echo "Google Cloud Ops Agent is installed."
+echo "Log retention configured for 100 days."
 echo "Server is listening on *"
 echo "-----------------------------------------------------"

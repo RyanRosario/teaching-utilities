@@ -1,0 +1,13 @@
+{
+    "smtp_host": "",
+    "smtp_port": 587,
+    "smtp_user": "",
+    "smtp_password": "",
+    "from_addr": "",
+    "db_host": "localhost",
+    "db_port": 5432,
+    "db_user": "",
+    "db_password": "",
+    "db_name": "admin",
+    "subject": ""
+}

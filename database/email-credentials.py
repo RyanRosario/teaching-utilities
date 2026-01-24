@@ -2,34 +2,28 @@
 """
 email_credentials.py - Email username/password to students from database
 
-Reads student data from admin.student table and sends each student their credentials.
-Password is decrypted UID with dashes removed.
+Reads student data from admin.students table and sends each student their credentials.
+Password is the student's University ID Number (which they already know).
 
 Usage:
-    ./email_credentials.py --smtp-host smtp.gmail.com --smtp-port 587 \
-        --smtp-user your-email@example.com --smtp-password 'your-app-password' \
-        --from-addr 'Course Admin <admin@example.com>' --subject 'Your Course Login'
+    ./email_credentials.py --config email-config.json
+    ./email_credentials.py --config email-config.json --dry-run
+    ./email_credentials.py --config email-config.json --test-email test@example.com
 
 Options:
+    --config FILE       Path to JSON configuration file (required)
     --dry-run           Print emails without sending
     --test-email ADDR   Send all emails to this address instead (for testing)
-    --db-host HOST      MySQL host (default: localhost)
-    --db-port PORT      MySQL port (default: 3306)
-    --db-user USER      MySQL user (default: root)
-    --db-password PASS  MySQL password
-    --db-socket PATH    MySQL socket path (alternative to host/port)
 """
 
 import smtplib
-import json
-import os
 import argparse
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import psycopg2
-import psycopg2.extras
 import time
-import random
+
 
 def generate_email_body(name, username):
     """Generate personalized email body"""
@@ -47,7 +41,7 @@ You will be required to change your password on first login.
 The new password must have lowercase, upper case, number and
 special characters.
 
-Please review the following video (https://youtu.be/o-VnMvYhvo0) to learn how the server works.
+Please review the following video (https://youtu.be/A8OqdndPULw) and Lecture 5 materials to learn how the server works.
 
 You can reset your password at any time at https://cs143.org/reset/
 
@@ -62,9 +56,9 @@ Mr. Roboto, for CS 143 Course Staff
 def send_email(smtp_conn, from_addr, to_addr, subject, body):
     """Send email via established SMTP connection"""
     msg = MIMEMultipart()
-    msg['From'] = 'CS 143 Course Staff <rosario@g.ucla.edu>' # from_addr
-    msg['To'] = to_addr # to_addr
-    msg['Subject'] = 'CS 143 Server' # subject
+    msg['From'] = from_addr
+    msg['To'] = to_addr
+    msg['Subject'] = subject
     msg['Cc'] = 'rrosario@cs.ucla.edu'
     msg.attach(MIMEText(body, 'plain'))
     
@@ -73,80 +67,48 @@ def send_email(smtp_conn, from_addr, to_addr, subject, body):
 
 
 def main():
-    # 1. First pass: Check for --config argument only
-    conf_parser = argparse.ArgumentParser(add_help=False)
-    conf_parser.add_argument('--config', help='Path to JSON configuration file')
-    args, remaining_argv = conf_parser.parse_known_args()
-
-    # 2. Load defaults from config file if specified
-    defaults = {
-        'smtp_port': 587,
-        'db_host': 'localhost',
-        'db_port': 5432,
-        'db_user': 'ryan',
-        'db_password': '6j5t6dqm$',
-        'subject': 'Your Course Login Credentials'
-    }
-
-    if args.config:
-        if os.path.exists(args.config):
-            print(f"Loading configuration from {args.config}...")
-            try:
-                with open(args.config, 'r') as f:
-                    config_data = json.load(f)
-                    defaults.update(config_data)
-            except Exception as e:
-                print(f"Error loading config file: {e}")
-                return 1
-        else:
-            print(f"Error: Config file '{args.config}' not found.")
-            return 1
-
-    # 3. Main parser with defaults from config
-    parser = argparse.ArgumentParser(
-        description='Email credentials to students',
-        parents=[conf_parser] # Include the --config arg in help
-    )
-    
-    parser.add_argument('--smtp-host', help='SMTP server hostname')
-    parser.add_argument('--smtp-port', type=int, help='SMTP port (default: 587)')
-    parser.add_argument('--smtp-user', help='SMTP username')
-    parser.add_argument('--smtp-password', help='SMTP password')
-    parser.add_argument('--from-addr', help='From address')
-    parser.add_argument('--subject', help='Email subject')
+    parser = argparse.ArgumentParser(description='Email credentials to students')
+    parser.add_argument('--config', required=True, help='Path to JSON configuration file')
     parser.add_argument('--dry-run', action='store_true', help='Print emails without sending')
     parser.add_argument('--test-email', help='Send all emails to this address (testing)')
-    parser.add_argument('--db-host', help='PostgreSQL host (default: localhost)')
-    parser.add_argument('--db-port', type=int, help='PostgreSQL port (default: 5432)')
-    parser.add_argument('--db-user', help='PostgreSQL user (default: ryan)')
-    parser.add_argument('--db-password', help='PostgreSQL password')
-    parser.add_argument('--db-socket', help='PostgreSQL socket path')
     
-    parser.set_defaults(**defaults)
+    args = parser.parse_args()
     
-    args = parser.parse_args(remaining_argv)
+    # Load config file
+    print(f"Loading configuration from {args.config}...")
+    try:
+        with open(args.config, 'r') as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        print(f"ERROR: Config file '{args.config}' not found.")
+        return 1
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Invalid JSON in config file: {e}")
+        return 1
     
-    # 4. Manual Validation
-    required_args = ['smtp_host', 'smtp_user', 'smtp_password', 'from_addr']
-    missing_args = [arg for arg in required_args if getattr(args, arg) is None]
+    # Validate required config keys
+    required_keys = ['smtp_host', 'smtp_user', 'smtp_password', 'from_addr', 'db_user', 'db_password']
+    missing_keys = [k for k in required_keys if k not in config]
+    if missing_keys:
+        print(f"ERROR: Missing required config keys: {', '.join(missing_keys)}")
+        return 1
     
-    if missing_args:
-        parser.error(f"Missing required arguments: {', '.join('--' + a.replace('_', '-') for a in missing_args)}")
-
+    # Set defaults for optional keys
+    config.setdefault('smtp_port', 587)
+    config.setdefault('db_host', 'localhost')
+    config.setdefault('db_port', 5432)
+    config.setdefault('db_name', 'admin')
+    config.setdefault('subject', 'Your Course Login Credentials')
     
     # Connect to PostgreSQL
     print("Connecting to PostgreSQL...")
     db_kwargs = {
-        'user': args.db_user,
-        'dbname': 'admin', # Using 'admin' database as requested
-        'password': args.db_password,
-        'host': args.db_host,
-        'port': args.db_port
+        'user': config['db_user'],
+        'dbname': config['db_name'],
+        'password': config['db_password'],
+        'host': config['db_host'],
+        'port': config['db_port']
     }
-    
-    if args.db_socket:
-        # psycopg2 uses 'host' for unix socket directory if it starts with /
-        db_kwargs['host'] = args.db_socket
     
     try:
         db = psycopg2.connect(**db_kwargs)
@@ -188,10 +150,10 @@ def main():
     # Connect to SMTP (skip if dry-run)
     smtp_conn = None
     if not args.dry_run:
-        print(f"Connecting to {args.smtp_host}:{args.smtp_port}...")
-        smtp_conn = smtplib.SMTP(args.smtp_host, args.smtp_port)
+        print(f"Connecting to {config['smtp_host']}:{config['smtp_port']}...")
+        smtp_conn = smtplib.SMTP(config['smtp_host'], config['smtp_port'])
         smtp_conn.starttls()
-        smtp_conn.login(args.smtp_user, args.smtp_password)
+        smtp_conn.login(config['smtp_user'], config['smtp_password'])
         print("Connected and authenticated.")
     
     # Send emails
@@ -203,12 +165,12 @@ def main():
         if args.dry_run:
             print(f"\n{'='*70}")
             print(f"To: {to_addr}")
-            print(f"Subject: {args.subject}")
+            print(f"Subject: {config['subject']}")
             print(f"{'='*70}")
             print(body)
         else:
             try:
-                send_email(smtp_conn, args.from_addr, to_addr, args.subject, body)
+                send_email(smtp_conn, config['from_addr'], to_addr, config['subject'], body)
                 print(f"✓ Sent to {student['name']} <{to_addr}>")
                 sent_count += 1
             except Exception as e:
