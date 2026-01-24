@@ -31,7 +31,7 @@ router.get('/change', (req, res) => {
 async function getEmailForUsername(username) {
     try {
         const { rows } = await dbPool.query(
-            'SELECT email_address FROM student WHERE username = $1',
+            'SELECT email_address FROM students WHERE username = $1',
             [username]
         );
         return rows.length > 0 ? rows[0].email_address : null;
