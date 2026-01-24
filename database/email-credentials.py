@@ -53,13 +53,14 @@ Mr. Roboto, for CS 143 Course Staff
 """
 
 
-def send_email(smtp_conn, from_addr, to_addr, subject, body):
+def send_email(smtp_conn, from_addr, to_addr, subject, body, cc_addr=None):
     """Send email via established SMTP connection"""
     msg = MIMEMultipart()
     msg['From'] = from_addr
     msg['To'] = to_addr
     msg['Subject'] = subject
-    msg['Cc'] = 'rrosario@cs.ucla.edu'
+    if cc_addr:
+        msg['Cc'] = cc_addr
     msg.attach(MIMEText(body, 'plain'))
     
     smtp_conn.send_message(msg)
@@ -153,34 +154,40 @@ def main():
     
     print(f"Loaded {len(students)} students from database")
     
-    # Connect to SMTP (skip if dry-run)
+    # Connect to SMTP
     smtp_conn = None
-    if not dry_run:
-        print(f"Connecting to {config['smtp_host']}:{config['smtp_port']}...")
-        smtp_conn = smtplib.SMTP(config['smtp_host'], config['smtp_port'])
-        smtp_conn.starttls()
-        smtp_conn.login(config['smtp_user'], config['smtp_password'])
-        print("Connected and authenticated.")
+    print(f"Connecting to {config['smtp_host']}:{config['smtp_port']}...")
+    smtp_conn = smtplib.SMTP(config['smtp_host'], config['smtp_port'])
+    smtp_conn.starttls()
+    smtp_conn.login(config['smtp_user'], config['smtp_password'])
+    print("Connected and authenticated.")
     
     # Send emails
     sent_count = 0
     for student in students:
         body = generate_email_body(student['name'], student['username'])
-        to_addr = test_email if test_email else student['email']
         
         if dry_run:
-            print(f"\n{'='*70}")
-            print(f"To: {to_addr}")
-            print(f"Subject: {config['subject']}")
-            print(f"{'='*70}")
-            print(body)
+            # In dry-run mode, send to test_email instead of student
+            if not test_email:
+                print("ERROR: dry_run is enabled but test_email is not set in config.")
+                return 1
+            to_addr = test_email
+            cc_addr = None  # No CC in dry-run
         else:
-            try:
-                send_email(smtp_conn, config['from_addr'], to_addr, config['subject'], body)
+            # Real send: to student, CC the instructor
+            to_addr = student['email']
+            cc_addr = config['from_addr']
+        
+        try:
+            send_email(smtp_conn, config['from_addr'], to_addr, config['subject'], body, cc_addr)
+            if dry_run:
+                print(f"✓ [DRY-RUN] Sent to {test_email} (would be {student['name']} <{student['email']}>)")
+            else:
                 print(f"✓ Sent to {student['name']} <{to_addr}>")
-                sent_count += 1
-            except Exception as e:
-                print(f"✗ Failed to send to {student['name']} <{to_addr}>: {e}")
+            sent_count += 1
+        except Exception as e:
+            print(f"✗ Failed to send to {student['name']} <{to_addr}>: {e}")
     
     if smtp_conn:
         smtp_conn.quit()
