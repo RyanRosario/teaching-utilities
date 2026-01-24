@@ -27,7 +27,13 @@ import time
 
 def generate_email_body(name, username):
     """Generate personalized email body"""
-    return f"""Hello {name.split(',')[1]},
+    # Handle "Last, First" or just "First Last" format
+    if ',' in name:
+        first_name = name.split(',')[1].strip()
+    else:
+        first_name = name.split()[0].strip()
+    
+    return f"""Hello {first_name},
 
 Your login credentials for the course system are:
 
