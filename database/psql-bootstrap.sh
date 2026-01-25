@@ -5,11 +5,39 @@ set -e
 
 # Parse arguments
 PURGE_DATA=false
-if [[ "$1" == "--purge-data" ]]; then
-    PURGE_DATA=true
-fi
+POSTGRES_ONLY=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --purge-data)
+            PURGE_DATA=true
+            shift
+            ;;
+        --postgres-only)
+            POSTGRES_ONLY=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --purge-data     Remove all PostgreSQL data directories during reinstall"
+            echo "  --postgres-only  Install only PostgreSQL (skip Node.js, Nginx, Certbot, Ops Agent)"
+            echo "  --help, -h       Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information."
+            exit 1
+            ;;
+    esac
+done
 
 echo "Starting PostgreSQL installation and configuration..."
+if [ "$POSTGRES_ONLY" = true ]; then
+    echo "Running in postgres-only mode (skipping Node.js, Nginx, Certbot, Ops Agent)."
+fi
 
 # 0. Clean Reinstall Logic
 if dpkg -l | grep -qw postgresql; then
@@ -60,34 +88,37 @@ sudo apt-get update
 sudo apt-get install -y postgresql postgresql-contrib git finger
 sudo apt-get install -y libpq-dev
 
-# 2.5 Install Latest Node.js (via NodeSource)
-echo "Installing Node.js..."
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt-get install -y nodejs
-echo "Installed Node.js version: $(node --version)"
+# 2.5-2.8: Optional components (skipped with --postgres-only)
+if [ "$POSTGRES_ONLY" = false ]; then
+    # 2.5 Install Latest Node.js (via NodeSource)
+    echo "Installing Node.js..."
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    echo "Installed Node.js version: $(node --version)"
 
-# 2.6 Install Nginx
-echo "Installing Nginx..."
-sudo apt-get install -y nginx
-sudo systemctl enable nginx
-echo "Nginx installed and enabled."
+    # 2.6 Install Nginx
+    echo "Installing Nginx..."
+    sudo apt-get install -y nginx
+    sudo systemctl enable nginx
+    echo "Nginx installed and enabled."
 
-# 2.7 Configure Nginx for Password Reset App
-if [ -f /opt/reset-password/nginx-sample.conf ]; then
-    echo "Configuring Nginx for password reset app..."
-    sudo cp /opt/reset-password/nginx-sample.conf /etc/nginx/sites-available/reset-password
-    sudo ln -sf /etc/nginx/sites-available/reset-password /etc/nginx/sites-enabled/
-    sudo rm -f /etc/nginx/sites-enabled/default
-    sudo nginx -t && sudo systemctl reload nginx
-    echo "Nginx configured for password reset app."
-else
-    echo "Note: /opt/reset-password/nginx-sample.conf not found. Skipping nginx site configuration."
+    # 2.7 Configure Nginx for Password Reset App
+    if [ -f /opt/reset-password/nginx-sample.conf ]; then
+        echo "Configuring Nginx for password reset app..."
+        sudo cp /opt/reset-password/nginx-sample.conf /etc/nginx/sites-available/reset-password
+        sudo ln -sf /etc/nginx/sites-available/reset-password /etc/nginx/sites-enabled/
+        sudo rm -f /etc/nginx/sites-enabled/default
+        sudo nginx -t && sudo systemctl reload nginx
+        echo "Nginx configured for password reset app."
+    else
+        echo "Note: /opt/reset-password/nginx-sample.conf not found. Skipping nginx site configuration."
+    fi
+
+    # 2.8 Install Certbot for SSL Certificates
+    echo "Installing Certbot..."
+    sudo apt-get install -y certbot python3-certbot-nginx
+    echo "Certbot installed. Run 'sudo certbot --nginx -d YOUR_DOMAIN' to obtain SSL certificate."
 fi
-
-# 2.8 Install Certbot for SSL Certificates
-echo "Installing Certbot..."
-sudo apt-get install -y certbot python3-certbot-nginx
-echo "Certbot installed. Run 'sudo certbot --nginx -d YOUR_DOMAIN' to obtain SSL certificate."
 
 # 3. Dynamic Version Detection
 # We need to know the version to find the config files and install the right pgaudit plugin
@@ -161,10 +192,12 @@ fi
 # 8. Restart PostgreSQL to apply changes
 sudo systemctl restart postgresql
 
-# 9. Install Google Cloud Ops Agent (for GCE Logging)
-echo "Installing Google Cloud Ops Agent..."
-curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-sudo bash add-google-cloud-ops-agent-repo.sh --also-install
+# 9. Install Google Cloud Ops Agent (for GCE Logging) - skipped with --postgres-only
+if [ "$POSTGRES_ONLY" = false ]; then
+    echo "Installing Google Cloud Ops Agent..."
+    curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+    sudo bash add-google-cloud-ops-agent-repo.sh --also-install
+fi
 
 # 10. Configure Log Retention (100 Days)
 echo "Configuring log retention for 100 days..."
@@ -198,8 +231,9 @@ cat <<EOF | sudo tee /etc/logrotate.d/rsyslog-100days
 EOF
 echo "Rsyslog (auth.log, syslog) configured for 100-day retention."
 
-# 10.3 Configure nginx logrotate
-cat <<EOF | sudo tee /etc/logrotate.d/nginx
+# 10.3 Configure nginx logrotate (skipped with --postgres-only)
+if [ "$POSTGRES_ONLY" = false ]; then
+    cat <<EOF | sudo tee /etc/logrotate.d/nginx
 /var/log/nginx/*.log {
     daily
     rotate 100
@@ -213,7 +247,8 @@ cat <<EOF | sudo tee /etc/logrotate.d/nginx
     endscript
 }
 EOF
-echo "Nginx logs configured for 100-day retention."
+    echo "Nginx logs configured for 100-day retention."
+fi
 
 # 10.4 Configure PostgreSQL logging
 sudo -u postgres psql -c "ALTER SYSTEM SET logging_collector = 'on';"
@@ -249,7 +284,12 @@ sudo systemctl restart postgresql
 echo "-----------------------------------------------------"
 echo "PostgreSQL $PG_VERSION Installation & Configuration Complete"
 echo "pgaudit is installed and enabled."
-echo "Google Cloud Ops Agent is installed."
+if [ "$POSTGRES_ONLY" = false ]; then
+    echo "Node.js, Nginx, Certbot installed."
+    echo "Google Cloud Ops Agent is installed."
+else
+    echo "(postgres-only mode: Node.js, Nginx, Certbot, Ops Agent skipped)"
+fi
 echo "Log retention configured for 100 days."
 echo "Server is listening on *"
 echo "-----------------------------------------------------"
