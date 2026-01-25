@@ -9,11 +9,13 @@ Usage:
     ./email_credentials.py --config email-config.json
     ./email_credentials.py --config email-config.json --dry-run
     ./email_credentials.py --config email-config.json --test-email test@example.com
+    ./email_credentials.py --config email-config.json --user jsmith
 
 Options:
     --config FILE       Path to JSON configuration file (required)
     --dry-run           Print emails without sending
     --test-email ADDR   Send all emails to this address instead (for testing)
+    --user USERNAME     Send email to a specific user only
 """
 
 import smtplib
@@ -78,6 +80,7 @@ def main():
     parser.add_argument('--config', required=True, help='Path to JSON configuration file')
     parser.add_argument('--dry-run', action='store_true', help='Print emails without sending')
     parser.add_argument('--test-email', help='Send all emails to this address (testing)')
+    parser.add_argument('--user', help='Send email to a specific user by username')
     
     args = parser.parse_args()
     
@@ -112,6 +115,7 @@ def main():
     # CLI args override config file
     dry_run = args.dry_run or config.get('dry_run', False)
     test_email = args.test_email or config.get('test_email', '') or None
+    target_user = args.user
     
     # Connect to PostgreSQL
     print("Connecting to PostgreSQL...")
@@ -130,16 +134,27 @@ def main():
         print(f"ERROR: Failed to connect to database: {e}")
         return 1
     
-    # Query students from public.students
-    query = """
-        SELECT 
-            student_name, 
-            email_address, 
-            username 
-        FROM public.students 
-        WHERE email_address IS NOT NULL AND email_address != ''
-    """
-    cursor.execute(query)
+    # Query users from public.students
+    if target_user:
+        query = """
+            SELECT 
+                student_name, 
+                email_address, 
+                username 
+            FROM public.students 
+            WHERE username = %s
+        """
+        cursor.execute(query, (target_user,))
+    else:
+        query = """
+            SELECT 
+                student_name, 
+                email_address, 
+                username 
+            FROM public.students 
+            WHERE email_address IS NOT NULL AND email_address != ''
+        """
+        cursor.execute(query)
     rows = cursor.fetchall()
     
     students = []
@@ -158,7 +173,11 @@ def main():
     cursor.close()
     db.close()
     
-    print(f"Loaded {len(students)} students from database")
+    if target_user and len(students) == 0:
+        print(f"ERROR: User '{target_user}' not found in database.")
+        return 1
+    
+    print(f"Loaded {len(students)} student(s) from database")
     
     # Connect to SMTP
     smtp_conn = None

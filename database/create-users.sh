@@ -11,26 +11,36 @@ fi
 ADMIN_FILE=""
 ROSTER_FILE=""
 RECREATE=false
+SKIP_POSTGRES=false
 
 # Simple argument parsing loop
 for arg in "$@"; do
     if [[ "$arg" == "--recreate" ]]; then
         RECREATE=true
+    elif [[ "$arg" == "--no-postgres" ]]; then
+        SKIP_POSTGRES=true
+    elif [[ "$arg" == "--add-admin" ]]; then
+        MODE="interactive_admin"
+        NEXT_IS_INTERACTIVE_USER=true
     elif [[ "$arg" == "--add-student" ]]; then
         MODE="interactive_student"
+        NEXT_IS_INTERACTIVE_USER=true
     elif [[ "$arg" == "--admin" ]]; then
         NEXT_IS_ADMIN=true
     elif [[ "$arg" == "--roster" ]]; then
         NEXT_IS_ROSTER=true
+    elif [[ "$NEXT_IS_INTERACTIVE_USER" == true ]]; then
+        INTERACTIVE_USERNAME="$arg"
+        NEXT_IS_INTERACTIVE_USER=false
     elif [[ "$NEXT_IS_ADMIN" == true ]]; then
         ADMIN_FILE="$arg"
         NEXT_IS_ADMIN=false
     elif [[ "$NEXT_IS_ROSTER" == true ]]; then
         ROSTER_FILE="$arg"
         NEXT_IS_ROSTER=false
-    elif [[ -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
+    elif [[ -z "$MODE" && -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
         ADMIN_FILE="$arg"
-    elif [[ -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
+    elif [[ -z "$MODE" && -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
         ROSTER_FILE="$arg"
     fi
 done
@@ -71,65 +81,31 @@ elif [[ -n "$ADMIN_FILE" && -n "$ROSTER_FILE" ]]; then
     fi
 fi
 
-if [[ "$MODE" == "interactive_admin" ]]; then
-     read -rp "Enter Admin Username: " u
-     read -rp "Enter Real Name: " n
-     read -s -rp "Enter Initial Password: " p; echo
-     read -rp "Enter UID: " i
-     read -rp "Enter Email: " e
-     
-     # Create temp file
-     t=$(mktemp)
-     echo "$u,$n,$p,$i,$e" > "$t"
-     process_admins_file "$t"
-     
-     # Trigger Postgres population
-     if [[ -f "./postgres-populate.sh" ]]; then
-          echo "Triggering Postgres provisioning for Admin..."
-          ./postgres-populate.sh --admin "$t"
-     fi
-     
-     rm "$t"
-     exit 0
-elif [[ "$MODE" == "interactive_student" ]]; then
-     read -rp "Enter Student UID (NNN-NNN-NNN): " i
-     read -rp "Enter Last Name: " l
-     read -rp "Enter First Name: " f
-     read -rp "Enter Email: " e
-     
-     # Create temp CSV matching roster format: UID, "Last, First", Email...
-     t=$(mktemp)
-     echo "$i,\"$l, $f\",$e,INTERACTIVE,MODE,," > "$t"
-     process_roster_file "$t"
-     
-     # Trigger Postgres population (pass as 2nd arg)
-     if [[ -f "./postgres-populate.sh" ]]; then
-          echo "Triggering Postgres provisioning for Student..."
-          ./postgres-populate.sh --roster "$t"
-     fi
-     
-     rm "$t"
-     exit 0
-fi
+# Interactive modes are handled after function definitions (see Main Execution section)
 
 if [[ -z "$ADMIN_FILE" && -z "$ROSTER_FILE" && -z "$MODE" ]]; then
     echo "Usage: $0 [options]"
     echo "Options:"
     echo "  --admin <file>       Path to Admin CSV"
     echo "  --roster <file>      Path to Student Roster CSV"
-    echo "  --add-admin          Interactively add an admin"
+    echo "  --add-admin [user]   Interactively add an admin"
     echo "  --add-student        Interactively add a student"
     echo "  --recreate           Recreate existing users"
+    echo "  --no-postgres        Skip PostgreSQL provisioning"
     echo "  <admin_file> <roster_file> (Classic positional usage)"
     exit 1
 fi
-if [[ ! -f "$ADMIN_FILE" ]]; then
-     echo "Error: Admin File '$ADMIN_FILE' not found."
-     exit 1
-fi
-if [[ -n "$ROSTER_FILE" && ! -f "$ROSTER_FILE" ]]; then
-     echo "Error: Roster File '$ROSTER_FILE' not found."
-     exit 1
+
+# Only validate files if not in interactive mode
+if [[ -z "$MODE" ]]; then
+    if [[ -n "$ADMIN_FILE" && ! -f "$ADMIN_FILE" ]]; then
+         echo "Error: Admin File '$ADMIN_FILE' not found."
+         exit 1
+    fi
+    if [[ -n "$ROSTER_FILE" && ! -f "$ROSTER_FILE" ]]; then
+         echo "Error: Roster File '$ROSTER_FILE' not found."
+         exit 1
+    fi
 fi
 
 
@@ -451,6 +427,59 @@ if [[ -n "$ROSTER_FILE" ]]; then
     process_roster_file "$ROSTER_FILE"
 fi
 
+# Interactive modes
+if [[ "$MODE" == "interactive_admin" ]]; then
+     # Use username from command line if provided, otherwise prompt
+     if [[ -n "$INTERACTIVE_USERNAME" ]]; then
+         u="$INTERACTIVE_USERNAME"
+     else
+         read -rp "Enter Admin Username: " u
+     fi
+     read -rp "Enter Real Name: " n
+     read -s -rp "Enter Initial Password: " p; echo
+     read -rp "Enter UID (any identifier): " i
+     read -rp "Enter Email: " e
+     
+     # Create temp file
+     t=$(mktemp)
+     echo "$u,$n,$p,$i,$e" > "$t"
+     process_admins_file "$t"
+     
+     # Trigger Postgres population
+     if [[ "$SKIP_POSTGRES" != true && -f "./postgres-populate.sh" ]]; then
+          echo "Triggering Postgres provisioning for Admin..."
+          ./postgres-populate.sh --admin "$t"
+     fi
+     
+     rm "$t"
+     echo "Admin user '$u' created successfully."
+     echo "Password: The password you entered (Initial Password)."
+fi
+
+if [[ "$MODE" == "interactive_student" ]]; then
+     read -rp "Enter Student UID (NNN-NNN-NNN): " i
+     read -rp "Enter Last Name: " l
+     read -rp "Enter First Name: " f
+     read -rp "Enter Email: " e
+     
+     # Create temp CSV matching roster format: UID, "Last, First", Email...
+     t=$(mktemp)
+     echo "$i,\"$l, $f\",$e,INTERACTIVE,MODE,," > "$t"
+     process_roster_file "$t"
+     
+     # Trigger Postgres population (pass as 2nd arg)
+     if [[ "$SKIP_POSTGRES" != true && -f "./postgres-populate.sh" ]]; then
+          echo "Triggering Postgres provisioning for Student..."
+          ./postgres-populate.sh --roster "$t"
+     fi
+     
+     rm "$t"
+     # Password for students is UID without dashes
+     pwd_hint=$(echo "$i" | tr -d '-')
+     echo "Student user created successfully."
+     echo "Password: UID without dashes ($pwd_hint)"
+fi
+
 echo "All users processed."
 
 # Now that users are created with their initial (potentially weak) passwords,
@@ -465,7 +494,7 @@ set_pw_config "dictcheck" "1"
 echo "User creation process complete."
 
 # Trigger Postgres Population for Batch Mode
-if [[ -f "./postgres-populate.sh" ]]; then
+if [[ "$SKIP_POSTGRES" != true && -f "./postgres-populate.sh" ]]; then
     if [[ -n "$ADMIN_FILE" || -n "$ROSTER_FILE" ]]; then
          echo "Automatically triggering Postgres population..."
          CMD="./postgres-populate.sh"
@@ -474,4 +503,6 @@ if [[ -f "./postgres-populate.sh" ]]; then
          
          eval "$CMD"
     fi
+elif [[ "$SKIP_POSTGRES" == true ]]; then
+    echo "Skipping PostgreSQL provisioning (--no-postgres flag set)."
 fi

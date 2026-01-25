@@ -10,33 +10,55 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Parse arguments
+#
+# Input File Types:
+#   ADMIN_FILE      - Full CSV with columns: username,name,password,uid,email
+#                     Used when integrating with create-users.sh (creates Unix users + Postgres)
+#   ROSTER_FILE     - Student roster CSV (UCLA format with UID, name, email, etc.)
+#                     Used when integrating with create-users.sh (creates Unix users + Postgres)
+#   ADMIN_USERS_FILE   - Simple text file with one admin username per line
+#                        For PostgreSQL-only provisioning (Unix users must already exist)
+#   STUDENT_USERS_FILE - Simple text file with one student username per line
+#                        For PostgreSQL-only provisioning (Unix users must already exist)
+#
 ADMIN_FILE=""
 ROSTER_FILE=""
-
-# Simple argument parsing loop - simplistic guess based on content or order?
-# create-users.sh uses order: [ADMIN] [ROSTER]. Let's stick to that convention.
-# But since we might run this independently, let's just grab them.
-# If $1 is a file, check if it looks like admin or roster?
-# Or just assume $1=Admin, $2=Roster as per 'create-users.sh' interface expectation.
+ADMIN_USERS_FILE=""
+STUDENT_USERS_FILE=""
 
 for arg in "$@"; do
     if [[ "$arg" == "--add-admin" ]]; then
         MODE="interactive_admin"
+        NEXT_IS_INTERACTIVE_USER=true
     elif [[ "$arg" == "--add-student" ]]; then
         MODE="interactive_student"
+        NEXT_IS_INTERACTIVE_USER=true
     elif [[ "$arg" == "--admin" ]]; then
         NEXT_IS_ADMIN=true
     elif [[ "$arg" == "--roster" ]]; then
         NEXT_IS_ROSTER=true
+    elif [[ "$arg" == "--admin-users" ]]; then
+        NEXT_IS_ADMIN_USERS=true
+    elif [[ "$arg" == "--student-users" ]]; then
+        NEXT_IS_STUDENT_USERS=true
+    elif [[ "$NEXT_IS_INTERACTIVE_USER" == true ]]; then
+        INTERACTIVE_USERNAME="$arg"
+        NEXT_IS_INTERACTIVE_USER=false
     elif [[ "$NEXT_IS_ADMIN" == true ]]; then
         ADMIN_FILE="$arg"
         NEXT_IS_ADMIN=false
     elif [[ "$NEXT_IS_ROSTER" == true ]]; then
         ROSTER_FILE="$arg"
         NEXT_IS_ROSTER=false
-    elif [[ -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
+    elif [[ "$NEXT_IS_ADMIN_USERS" == true ]]; then
+        ADMIN_USERS_FILE="$arg"
+        NEXT_IS_ADMIN_USERS=false
+    elif [[ "$NEXT_IS_STUDENT_USERS" == true ]]; then
+        STUDENT_USERS_FILE="$arg"
+        NEXT_IS_STUDENT_USERS=false
+    elif [[ -z "$MODE" && -z "$ADMIN_FILE" && ! "$arg" == --* ]]; then
         ADMIN_FILE="$arg"
-    elif [[ -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
+    elif [[ -z "$MODE" && -z "$ROSTER_FILE" && ! "$arg" == --* ]]; then
         ROSTER_FILE="$arg"
     fi
 done
@@ -75,45 +97,22 @@ elif [[ -n "$ADMIN_FILE" && -n "$ROSTER_FILE" ]]; then
     fi
 fi
 
-if [[ "$MODE" == "interactive_admin" ]]; then
-     # For Postgres Admin process, we only strictly need the username to exist in system.
-     # But the csv parser expects: username,name,password,uid,email
-     read -rp "Enter Admin Username (must exist in system): " u
-     
-     t=$(mktemp)
-     # Dummy fillers for non-postgres fields
-     echo "$u,Interactive Admin,pass,0,email@local" > "$t"
-     process_admins_postgres "$t"
-     rm "$t"
-     exit 0 # We assume they might want to run peer-auth setup? 
-            # Actually peer auth setup is global. We should probably let it run or duplicate it?
-            # Let's let it run if we want full setup, OR just exit. 
-            # Usually populate is for users.
-            # But the script ends with peer auth config.
-            # Let's just run the function and maybe fall through? 
-            # The structure of the script defaults to "if variables are set". 
-            # If we exit here, peer auth won't double-check. 
-            # Let's exit, assuming peer auth is a one-time setup.
-     exit 0
+# Interactive modes are handled after function definitions (see Main Execution section)
 
-elif [[ "$MODE" == "interactive_student" ]]; then
-     read -rp "Enter Student UID (NNN-NNN-NNN): " i
-     read -rp "Enter Last Name: " l
-     read -rp "Enter First Name: " f
-     read -rp "Enter Email: " e
-     
-     t=$(mktemp)
-     # Format: UID, "Last, First", Email...
-     echo "$i,\"$l, $f\",$e,INT,MODE,," > "$t"
-     process_roster_postgres "$t"
-     rm "$t"
-     exit 0
-fi
-
-if [[ -z "$ADMIN_FILE" && -z "$ROSTER_FILE" && -z "$MODE" ]]; then
+if [[ -z "$ADMIN_FILE" && -z "$ROSTER_FILE" && -z "$ADMIN_USERS_FILE" && -z "$STUDENT_USERS_FILE" && -z "$MODE" ]]; then
     echo "Usage: $0 [options]"
-    echo "  --admin <file>   Admin CSV"
-    echo "  --roster <file>  Roster CSV"
+    echo ""
+    echo "CSV Input (full data):"
+    echo "  --admin <file>         Admin CSV (username,name,password,uid,email)"
+    echo "  --roster <file>        Roster CSV (student roster format)"
+    echo ""
+    echo "Simple Username Lists (one username per line):"
+    echo "  --admin-users <file>   File with admin usernames (one per line)"
+    echo "  --student-users <file> File with student usernames (one per line)"
+    echo ""
+    echo "Interactive:"
+    echo "  --add-admin            Add single admin interactively"
+    echo "  --add-student          Add single student interactively"
     exit 1
 fi
 if [[ -n "$ADMIN_FILE" && ! -f "$ADMIN_FILE" ]]; then
@@ -124,8 +123,16 @@ if [[ -n "$ROSTER_FILE" && ! -f "$ROSTER_FILE" ]]; then
      echo "Error: Roster File '$ROSTER_FILE' not found."
      exit 1
 fi
+if [[ -n "$ADMIN_USERS_FILE" && ! -f "$ADMIN_USERS_FILE" ]]; then
+     echo "Error: Admin Users File '$ADMIN_USERS_FILE' not found."
+     exit 1
+fi
+if [[ -n "$STUDENT_USERS_FILE" && ! -f "$STUDENT_USERS_FILE" ]]; then
+     echo "Error: Student Users File '$STUDENT_USERS_FILE' not found."
+     exit 1
+fi
 
-echo "Starting PostgreSQL population from $INPUT_FILE..."
+echo "Starting PostgreSQL population..."
 
 # 0. Setup Admin Database (Central Registry)
 ADMIN_DB="admin"
@@ -197,6 +204,11 @@ CREATE TABLE IF NOT EXISTS students (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );"
 echo "Ensured 'students' table exists in '$ADMIN_DB'."
+
+# Fix sequence if it's out of sync
+sudo -u postgres psql -d "$ADMIN_DB" -c "
+SELECT setval('students_student_id_seq', COALESCE((SELECT MAX(student_id) FROM students), 0) + 1, false);
+" >/dev/null 2>&1
 
 # 1. Provide Postgres Roles and Databases
 # Function to process Admin Postgres
@@ -358,12 +370,216 @@ process_roster_postgres() {
     done < "$input"
 }
 
+# Function to process simple admin username list (one username per line)
+process_admin_users_list() {
+    local input=$1
+    echo "Processing Admin Users List: $input"
+    
+    while IFS= read -r username || [ -n "$username" ]; do
+        username=$(echo "$username" | tr -d '\r' | xargs)
+        # Skip empty lines and comments
+        if [[ -z "$username" || "$username" == \#* ]]; then continue; fi
+
+        if ! id "$username" &>/dev/null; then
+            echo "Warning: Unix user '$username' does not exist. Skipping."
+            continue
+        fi
+
+        echo "Provisioning Admin Postgres user '$username'..."
+        
+        # Create Superuser
+        if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$username'" | grep -q 1; then
+            sudo -u postgres createuser --superuser "$username"
+            echo "Created Postgres superuser '$username'."
+        else
+            echo "Postgres superuser '$username' already exists."
+        fi
+
+        # Create Personal Schema for Admin in CS143 DB
+        sudo -u postgres psql -d "$CS143_DB" -c "CREATE SCHEMA IF NOT EXISTS \"$username\" AUTHORIZATION \"$username\";" >/dev/null
+        sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO public, \"$username\";" >/dev/null
+        echo "Created admin workspace schema '$username' in '$CS143_DB'."
+
+        # Ensure tables created by this Admin in PUBLIC are readable by everyone
+        sudo -u postgres psql -d "$CS143_DB" -c "ALTER DEFAULT PRIVILEGES FOR ROLE \"$username\" IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC;" >/dev/null
+
+        # Try to get user info from system for students table
+        # Use finger or getent to get real name
+        local real_name=""
+        if command -v finger &>/dev/null; then
+            real_name=$(finger "$username" 2>/dev/null | grep "Name:" | sed 's/.*Name: //' | head -1)
+        fi
+        if [[ -z "$real_name" ]]; then
+            real_name=$(getent passwd "$username" 2>/dev/null | cut -d: -f5 | cut -d, -f1)
+        fi
+        if [[ -z "$real_name" ]]; then
+            real_name="$username"
+        fi
+        
+        # For simple username list, use username as UID placeholder
+        local hashed_uid=$(echo -n "$username" | sha256sum | awk '{print $1}')
+        
+        # Add to students table with available info
+        sudo -u postgres psql -d "$ADMIN_DB" -c "
+        INSERT INTO students (student_name, username, hashed_university_id, email_address)
+        VALUES ('$real_name', '$username', '$hashed_uid', '$username@localhost')
+        ON CONFLICT (username) DO UPDATE 
+        SET student_name = EXCLUDED.student_name
+        WHERE students.student_name = '' OR students.student_name IS NULL;
+        " >/dev/null
+        echo "Registered admin '$username' in students table."
+
+    done < "$input"
+}
+
+# Function to process simple student username list (one username per line)
+process_student_users_list() {
+    local input=$1
+    echo "Processing Student Users List: $input"
+    
+    while IFS= read -r username || [ -n "$username" ]; do
+        username=$(echo "$username" | tr -d '\r' | xargs)
+        # Skip empty lines and comments
+        if [[ -z "$username" || "$username" == \#* ]]; then continue; fi
+
+        if ! id "$username" &>/dev/null; then
+            echo "Warning: Unix user '$username' does not exist. Skipping."
+            continue
+        fi
+
+        echo "Provisioning Postgres for student '$username'..."
+        
+        # Create Role (Login)
+        if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$username'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE ROLE \"$username\" WITH LOGIN;" >/dev/null
+            echo "Created Postgres role '$username'."
+        else
+            echo "Postgres role '$username' already exists."
+        fi
+
+        # Grant Connect to the DB
+        sudo -u postgres psql -d "$CS143_DB" -c "GRANT CONNECT ON DATABASE \"$CS143_DB\" TO \"$username\";" >/dev/null
+
+        # Create Schema
+        if ! sudo -u postgres psql -d "$CS143_DB" -tAc "SELECT 1 FROM information_schema.schemata WHERE schema_name='$username'" | grep -q 1; then
+            sudo -u postgres psql -d "$CS143_DB" -c "CREATE SCHEMA \"$username\" AUTHORIZATION \"$username\";" >/dev/null
+            sudo -u postgres psql -d "$CS143_DB" -c "REVOKE ALL ON SCHEMA \"$username\" FROM PUBLIC;" >/dev/null
+            echo "Created private schema '$username' in '$CS143_DB'."
+        fi
+        
+        # Set search_path
+        sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
+
+        # Get user info from system for students table
+        local real_name=""
+        if command -v finger &>/dev/null; then
+            real_name=$(finger "$username" 2>/dev/null | grep "Name:" | sed 's/.*Name: //' | head -1)
+        fi
+        if [[ -z "$real_name" ]]; then
+            real_name=$(getent passwd "$username" 2>/dev/null | cut -d: -f5 | cut -d, -f1)
+        fi
+        if [[ -z "$real_name" ]]; then
+            real_name="$username"
+        fi
+        
+        # Use username as UID placeholder
+        local hashed_uid=$(echo -n "$username" | sha256sum | awk '{print $1}')
+        
+        # Insert into students table
+        sudo -u postgres psql -d "$ADMIN_DB" -c "
+        INSERT INTO students (student_name, username, hashed_university_id, email_address)
+        VALUES ('$real_name', '$username', '$hashed_uid', '$username@localhost')
+        ON CONFLICT (username) DO UPDATE 
+        SET student_name = EXCLUDED.student_name
+        WHERE students.student_name = '' OR students.student_name IS NULL;
+        " >/dev/null
+        echo "Registered student '$username' in students table."
+
+    done < "$input"
+}
+
 # Main Execution
 if [[ -n "$ADMIN_FILE" ]]; then
     process_admins_postgres "$ADMIN_FILE"
 fi
 if [[ -n "$ROSTER_FILE" ]]; then
     process_roster_postgres "$ROSTER_FILE"
+fi
+if [[ -n "$ADMIN_USERS_FILE" ]]; then
+    process_admin_users_list "$ADMIN_USERS_FILE"
+fi
+if [[ -n "$STUDENT_USERS_FILE" ]]; then
+    process_student_users_list "$STUDENT_USERS_FILE"
+fi
+
+# Interactive modes
+if [[ "$MODE" == "interactive_admin" ]]; then
+    # Prompt for all required information
+    if [[ -z "$INTERACTIVE_USERNAME" ]]; then
+        read -rp "Enter Admin Username (must exist in system): " INTERACTIVE_USERNAME
+    fi
+    read -rp "Enter Full Name: " INTERACTIVE_NAME
+    read -rp "Enter UID (or any identifier): " INTERACTIVE_UID
+    read -rp "Enter Email: " INTERACTIVE_EMAIL
+    
+    # Create a temp CSV file with all the data
+    t=$(mktemp)
+    echo "$INTERACTIVE_USERNAME,$INTERACTIVE_NAME,unused,$INTERACTIVE_UID,$INTERACTIVE_EMAIL" > "$t"
+    process_admins_postgres "$t"
+    rm "$t"
+    echo "Admin '$INTERACTIVE_USERNAME' provisioned and added to students table."
+fi
+
+if [[ "$MODE" == "interactive_student" ]]; then
+    # Prompt for all required information
+    if [[ -z "$INTERACTIVE_USERNAME" ]]; then
+        read -rp "Enter Student Username (must exist in system): " INTERACTIVE_USERNAME
+    fi
+    read -rp "Enter Full Name: " INTERACTIVE_NAME
+    read -rp "Enter UID (NNN-NNN-NNN): " INTERACTIVE_UID
+    read -rp "Enter Email: " INTERACTIVE_EMAIL
+    
+    username="$INTERACTIVE_USERNAME"
+    
+    # Verify Unix user exists
+    if ! id "$username" &>/dev/null; then
+        echo "Error: Unix user '$username' does not exist."
+        exit 1
+    fi
+    
+    echo "Provisioning Postgres for student '$username'..."
+    
+    # Create Role (Login)
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$username'" | grep -q 1; then
+        sudo -u postgres psql -c "CREATE ROLE \"$username\" WITH LOGIN;" >/dev/null
+        echo "Created Postgres role '$username'."
+    fi
+
+    # Grant Connect to the DB
+    sudo -u postgres psql -d "$CS143_DB" -c "GRANT CONNECT ON DATABASE \"$CS143_DB\" TO \"$username\";" >/dev/null
+
+    # Create Schema
+    if ! sudo -u postgres psql -d "$CS143_DB" -tAc "SELECT 1 FROM information_schema.schemata WHERE schema_name='$username'" | grep -q 1; then
+        sudo -u postgres psql -d "$CS143_DB" -c "CREATE SCHEMA \"$username\" AUTHORIZATION \"$username\";" >/dev/null
+        sudo -u postgres psql -d "$CS143_DB" -c "REVOKE ALL ON SCHEMA \"$username\" FROM PUBLIC;" >/dev/null
+        echo "Created private schema '$username' in '$CS143_DB'."
+    fi
+    
+    # Set search_path
+    sudo -u postgres psql -c "ALTER ROLE \"$username\" SET search_path TO \"$username\", public;" >/dev/null
+    
+    # Add to students table
+    hashed_uid=$(echo -n "$INTERACTIVE_UID" | sha256sum | awk '{print $1}')
+    sudo -u postgres psql -d "$ADMIN_DB" -c "
+    INSERT INTO students (student_name, username, hashed_university_id, email_address)
+    VALUES ('$INTERACTIVE_NAME', '$username', '$hashed_uid', '$INTERACTIVE_EMAIL')
+    ON CONFLICT (username) DO UPDATE 
+    SET student_name = EXCLUDED.student_name, 
+        hashed_university_id = EXCLUDED.hashed_university_id,
+        email_address = EXCLUDED.email_address;
+    " >/dev/null
+    
+    echo "Student '$username' provisioned and added to students table."
 fi
 
 # 2. Configure Peer Authentication in pg_hba.conf
@@ -392,13 +608,24 @@ else
     echo "Error: Could not detect PostgreSQL version. Peer auth config skipped."
 fi
 
-# 3. Configure Global Environment for PGDATABASE
-# This ensures that when any user types 'psql', it connects to 'cs143' by default
-# (instead of trying to connect to 'username' database which doesn't exist).
+# 3. Configure Global Default Database
+# Set PGDATABASE in /etc/environment so it applies to ALL sessions (login, non-login, SSH, etc.)
+# This ensures 'psql' connects to 'cs143' by default for everyone.
+echo "Configuring default database (PGDATABASE=$CS143_DB)..."
+
+# Add to /etc/environment (loaded by PAM for all session types)
+if grep -q "^PGDATABASE=" /etc/environment 2>/dev/null; then
+    sudo sed -i "s/^PGDATABASE=.*/PGDATABASE=$CS143_DB/" /etc/environment
+else
+    echo "PGDATABASE=$CS143_DB" | sudo tee -a /etc/environment >/dev/null
+fi
+
+# Also add to /etc/profile.d for shell scripts that source profile
 PROFILE_SCRIPT="/etc/profile.d/cs143-env.sh"
-echo "Configuring global shell environment in $PROFILE_SCRIPT..."
 echo "export PGDATABASE=$CS143_DB" | sudo tee "$PROFILE_SCRIPT" > /dev/null
 sudo chmod 644 "$PROFILE_SCRIPT"
+
+echo "Default database configured. New sessions will connect to '$CS143_DB' by default."
 
 
 

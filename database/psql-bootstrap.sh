@@ -1,11 +1,13 @@
 #!/bin/bash
 
-# Exit on any error
+# PostgreSQL Bootstrap Script
+# This script installs and configures PostgreSQL with pgaudit, remote access, and log retention.
+# For password reset app components (Node.js, Nginx, Certbot), run password-reset.sh separately.
+
 set -e
 
 # Parse arguments
 PURGE_DATA=false
-POSTGRES_ONLY=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -13,17 +15,20 @@ while [[ $# -gt 0 ]]; do
             PURGE_DATA=true
             shift
             ;;
-        --postgres-only)
-            POSTGRES_ONLY=true
-            shift
-            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
+            echo "This script installs and configures PostgreSQL with:"
+            echo "  - Latest PostgreSQL from PGDG repository"
+            echo "  - pgaudit extension for audit logging"
+            echo "  - Remote access configuration"
+            echo "  - 100-day log retention"
+            echo ""
             echo "Options:"
             echo "  --purge-data     Remove all PostgreSQL data directories during reinstall"
-            echo "  --postgres-only  Install only PostgreSQL (skip Node.js, Nginx, Certbot, Ops Agent)"
             echo "  --help, -h       Show this help message"
+            echo ""
+            echo "For password reset app (Node.js, Nginx, Certbot), run password-reset.sh separately."
             exit 0
             ;;
         *)
@@ -35,9 +40,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "Starting PostgreSQL installation and configuration..."
-if [ "$POSTGRES_ONLY" = true ]; then
-    echo "Running in postgres-only mode (skipping Node.js, Nginx, Certbot, Ops Agent)."
-fi
 
 # 0. Clean Reinstall Logic
 if dpkg -l | grep -qw postgresql; then
@@ -69,56 +71,30 @@ fi
 
 # 1. Update system and add PostgreSQL Global Development Group (PGDG) repository
 # This ensures we get the true "LATEST" version, not just what's in the Ubuntu repo.
+
+# Clean up any existing PGDG repository configurations to prevent Signed-By conflicts
+echo "Cleaning up any existing PGDG repository configurations..."
+sudo rm -f /etc/apt/sources.list.d/pgdg.list
+sudo rm -f /etc/apt/sources.list.d/apt.postgresql.org.sources
+sudo rm -f /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+sudo rm -f /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+# Clean up any .old files that cause warnings
+sudo find /etc/apt/sources.list.d/ -name "*.old*" -delete 2>/dev/null || true
+
 sudo apt-get update
-sudo apt-get install -y postgresql-common
-# This script is provided by postgresql-common to easily add the repo
-if [ -f /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh ]; then
-    sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-else
-    # Fallback manual method if the helper script isn't there (older ubuntu)
-    sudo apt-get install -y curl ca-certificates
-    sudo install -d /usr/share/postgresql-common/pgdg
-    sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
-    sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-fi
+sudo apt-get install -y postgresql-common gnupg curl ca-certificates
+
+# Add PGDG repository with properly formatted GPG key
+echo "Adding PostgreSQL PGDG repository..."
+sudo install -d /usr/share/postgresql-common/pgdg
+curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor --yes -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
 
 # 2. Install Latest PostgreSQL
 sudo apt-get update
 # 'postgresql' metapackage always points to the latest supported version in the repo
 sudo apt-get install -y postgresql postgresql-contrib git finger
 sudo apt-get install -y libpq-dev
-
-# 2.5-2.8: Optional components (skipped with --postgres-only)
-if [ "$POSTGRES_ONLY" = false ]; then
-    # 2.5 Install Latest Node.js (via NodeSource)
-    echo "Installing Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-    sudo apt-get install -y nodejs
-    echo "Installed Node.js version: $(node --version)"
-
-    # 2.6 Install Nginx
-    echo "Installing Nginx..."
-    sudo apt-get install -y nginx
-    sudo systemctl enable nginx
-    echo "Nginx installed and enabled."
-
-    # 2.7 Configure Nginx for Password Reset App
-    if [ -f /opt/reset-password/nginx-sample.conf ]; then
-        echo "Configuring Nginx for password reset app..."
-        sudo cp /opt/reset-password/nginx-sample.conf /etc/nginx/sites-available/reset-password
-        sudo ln -sf /etc/nginx/sites-available/reset-password /etc/nginx/sites-enabled/
-        sudo rm -f /etc/nginx/sites-enabled/default
-        sudo nginx -t && sudo systemctl reload nginx
-        echo "Nginx configured for password reset app."
-    else
-        echo "Note: /opt/reset-password/nginx-sample.conf not found. Skipping nginx site configuration."
-    fi
-
-    # 2.8 Install Certbot for SSL Certificates
-    echo "Installing Certbot..."
-    sudo apt-get install -y certbot python3-certbot-nginx
-    echo "Certbot installed. Run 'sudo certbot --nginx -d YOUR_DOMAIN' to obtain SSL certificate."
-fi
 
 # 3. Dynamic Version Detection
 # We need to know the version to find the config files and install the right pgaudit plugin
@@ -159,7 +135,6 @@ fi
 cat <<EOF | sudo tee -a "$CONF_FILE"
 
 # --- Automatic pgaudit configuration ---
-# --- Automatic pgaudit configuration ---
 pgaudit.log = 'all' 
 pgaudit.log_catalog = on
 pgaudit.log_level = log
@@ -176,12 +151,23 @@ else
     echo "listen_addresses = '*'" | sudo tee -a "$CONF_FILE"
 fi
 
-# 6. Configure Client Authentication (pg_hba.conf) (Internet Access Step 2)
+# 6. Configure Client Authentication (pg_hba.conf)
+# - Local connections use peer auth (no password, OS login is trusted)
+# - Remote connections use PAM auth (validates against Unix/system password)
 echo "Configuring $HBA_FILE..."
-# Allow access from anywhere (0.0.0.0/0) using SCRAM-SHA-256 (modern default)
-# We insert this line before other host rules to ensure it's evaluated, or at the end.
-# Postgres reads top-down. The default usually handles local/host. We append to end for generic remote access.
-echo "host    all             all             0.0.0.0/0               scram-sha-256" | sudo tee -a "$HBA_FILE"
+# Allow access from anywhere using PAM authentication (uses Unix password)
+echo "host    all             all             0.0.0.0/0               pam" | sudo tee -a "$HBA_FILE"
+
+# 6.5 Configure PAM service for PostgreSQL
+# This is required for PAM authentication to work with remote connections
+echo "Configuring PAM service for PostgreSQL..."
+cat <<EOF | sudo tee /etc/pam.d/postgresql
+# PAM configuration for PostgreSQL
+# Allows PostgreSQL to authenticate users against Unix passwords
+@include common-auth
+@include common-account
+EOF
+echo "PAM service configured for PostgreSQL."
 
 # 7. Open Firewall (Optional but recommended if UFW is active)
 if command -v ufw > /dev/null; then
@@ -192,18 +178,12 @@ fi
 # 8. Restart PostgreSQL to apply changes
 sudo systemctl restart postgresql
 
-# 9. Install Google Cloud Ops Agent (for GCE Logging) - skipped with --postgres-only
-if [ "$POSTGRES_ONLY" = false ]; then
-    echo "Installing Google Cloud Ops Agent..."
-    curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-    sudo bash add-google-cloud-ops-agent-repo.sh --also-install
-fi
-
-# 10. Configure Log Retention (100 Days)
+# 9. Configure Log Retention (100 Days)
 echo "Configuring log retention for 100 days..."
 
-# 10.1 Configure journald for persistent storage and 100-day retention
+# 9.1 Configure journald for persistent storage and 100-day retention
 sudo mkdir -p /var/log/journal
+sudo mkdir -p /etc/systemd/journald.conf.d
 cat <<EOF | sudo tee /etc/systemd/journald.conf.d/retention.conf
 [Journal]
 Storage=persistent
@@ -213,7 +193,7 @@ EOF
 sudo systemctl restart systemd-journald
 echo "Journald configured for 100-day retention."
 
-# 10.2 Configure rsyslog logrotate (auth.log, syslog)
+# 9.2 Configure rsyslog logrotate (auth.log, syslog)
 cat <<EOF | sudo tee /etc/logrotate.d/rsyslog-100days
 /var/log/syslog
 /var/log/auth.log
@@ -231,26 +211,7 @@ cat <<EOF | sudo tee /etc/logrotate.d/rsyslog-100days
 EOF
 echo "Rsyslog (auth.log, syslog) configured for 100-day retention."
 
-# 10.3 Configure nginx logrotate (skipped with --postgres-only)
-if [ "$POSTGRES_ONLY" = false ]; then
-    cat <<EOF | sudo tee /etc/logrotate.d/nginx
-/var/log/nginx/*.log {
-    daily
-    rotate 100
-    missingok
-    notifempty
-    compress
-    delaycompress
-    sharedscripts
-    postrotate
-        [ -f /var/run/nginx.pid ] && kill -USR1 \$(cat /var/run/nginx.pid)
-    endscript
-}
-EOF
-    echo "Nginx logs configured for 100-day retention."
-fi
-
-# 10.4 Configure PostgreSQL logging
+# 9.3 Configure PostgreSQL logging
 sudo -u postgres psql -c "ALTER SYSTEM SET logging_collector = 'on';"
 sudo -u postgres psql -c "ALTER SYSTEM SET log_directory = 'log';"
 sudo -u postgres psql -c "ALTER SYSTEM SET log_filename = 'postgresql-%Y-%m-%d.log';"
@@ -283,13 +244,13 @@ sudo systemctl restart postgresql
 
 echo "-----------------------------------------------------"
 echo "PostgreSQL $PG_VERSION Installation & Configuration Complete"
-echo "pgaudit is installed and enabled."
-if [ "$POSTGRES_ONLY" = false ]; then
-    echo "Node.js, Nginx, Certbot installed."
-    echo "Google Cloud Ops Agent is installed."
-else
-    echo "(postgres-only mode: Node.js, Nginx, Certbot, Ops Agent skipped)"
-fi
-echo "Log retention configured for 100 days."
-echo "Server is listening on *"
+echo ""
+echo "Installed and configured:"
+echo "  - PostgreSQL $PG_VERSION (listening on all interfaces)"
+echo "  - pgaudit extension (audit logging enabled)"
+echo "  - Remote access via SCRAM-SHA-256"
+echo "  - 100-day log retention"
+echo ""
+echo "For password reset app (Node.js, Nginx, Certbot), run:"
+echo "  ./password-reset.sh"
 echo "-----------------------------------------------------"

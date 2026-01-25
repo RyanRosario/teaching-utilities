@@ -1,0 +1,17 @@
+[project]
+name = "teaching-utilities-database"
+version = "1.0.0"
+description = "Database management tools for course administration"
+requires-python = ">=3.8"
+
+dependencies = [
+    "psycopg2-binary>=2.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+email-credentials = "email_credentials:main"
