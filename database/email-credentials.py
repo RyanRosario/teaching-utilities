@@ -81,6 +81,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Print emails without sending')
     parser.add_argument('--test-email', help='Send all emails to this address (testing)')
     parser.add_argument('--user', help='Send email to a specific user by username')
+    parser.add_argument('--peer-auth', action='store_true', help='Use PostgreSQL peer authentication (Unix socket)')
     
     args = parser.parse_args()
     
@@ -96,8 +97,8 @@ def main():
         print(f"ERROR: Invalid JSON in config file: {e}")
         return 1
     
-    # Validate required config keys
-    required_keys = ['smtp_host', 'smtp_user', 'smtp_password', 'from_addr', 'db_user', 'db_password']
+    # Validate required config keys (db_user and db_password are optional for peer auth)
+    required_keys = ['smtp_host', 'smtp_user', 'smtp_password', 'from_addr']
     missing_keys = [k for k in required_keys if k not in config]
     if missing_keys:
         print(f"ERROR: Missing required config keys: {', '.join(missing_keys)}")
@@ -105,8 +106,6 @@ def main():
     
     # Set defaults for optional keys
     config.setdefault('smtp_port', 587)
-    config.setdefault('db_host', 'localhost')
-    config.setdefault('db_port', 5432)
     config.setdefault('db_name', 'admin')
     config.setdefault('subject', 'Your Course Login Credentials')
     config.setdefault('test_email', '')
@@ -119,13 +118,21 @@ def main():
     
     # Connect to PostgreSQL
     print("Connecting to PostgreSQL...")
-    db_kwargs = {
-        'user': config['db_user'],
-        'dbname': config['db_name'],
-        'password': config['db_password'],
-        'host': config['db_host'],
-        'port': config['db_port']
-    }
+    
+    if args.peer_auth:
+        # Peer auth: just database name, no host/user/password
+        db_kwargs = {'dbname': config['db_name']}
+    else:
+        # Build connection params from config
+        db_kwargs = {'dbname': config['db_name']}
+        if config.get('db_host'):
+            db_kwargs['host'] = config['db_host']
+        if config.get('db_port'):
+            db_kwargs['port'] = config['db_port']
+        if config.get('db_user'):
+            db_kwargs['user'] = config['db_user']
+        if config.get('db_password'):
+            db_kwargs['password'] = config['db_password']
     
     try:
         db = psycopg2.connect(**db_kwargs)
