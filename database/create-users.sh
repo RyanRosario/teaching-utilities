@@ -457,38 +457,70 @@ if [[ "$MODE" == "interactive_admin" ]]; then
 fi
 
 if [[ "$MODE" == "interactive_student" ]]; then
-     read -rp "Enter Student UID (NNN-NNN-NNN): " i
-     read -rp "Enter Last Name: " l
-     read -rp "Enter First Name: " f
-     read -rp "Enter Email: " e
+     # Use username from command line if provided, otherwise prompt
+     if [[ -n "$INTERACTIVE_USERNAME" ]]; then
+          username="$INTERACTIVE_USERNAME"
+     else
+          read -rp "Enter Username: " username
+     fi
      
-     # Generate username using the same algorithm as process_roster_file
-     generated_username=$(propose_username "$f" "$l")
-     if [[ -z "$generated_username" ]]; then
-          echo "Error: Could not generate unique username for $f $l."
+     # Validate username
+     if [[ -z "$username" ]]; then
+          echo "Error: Username cannot be empty."
           exit 1
      fi
      
-     # Create temp CSV matching roster format: UID, "Last, First", Email...
-     t=$(mktemp)
-     echo "$i,\"$l, $f\",$e,INTERACTIVE,MODE,," > "$t"
-     process_roster_file "$t"
-     rm "$t"
+     read -rp "Enter Full Name: " name
+     read -rp "Enter Student UID: " uid
+     read -rp "Enter Email: " email
      
-     # Trigger Postgres population with the actual username
+     # Check if user exists
+     if id "$username" &>/dev/null; then
+          if [ "$RECREATE" = true ]; then
+               echo "User '$username' exists. Deleting..."
+               userdel -r "$username" 2>/dev/null || true
+          else
+               echo "Error: User '$username' already exists. Use --recreate to overwrite."
+               exit 1
+          fi
+     fi
+     
+     # Password = UID without dashes (if any)
+     password=$(echo "$uid" | tr -d '-')
+     
+     echo "Creating user '$username' for $name..."
+     
+     if useradd -m -s /bin/bash -c "$name" "$username"; then
+          echo "$username:$password" | chpasswd
+          if [[ $? -ne 0 ]]; then
+               echo "Error: Password set failed for '$username'."
+               userdel -r "$username" 2>/dev/null
+               exit 1
+          fi
+          # Force password change on first login
+          chage -d 0 "$username"
+          echo "Created system user '$username' with home directory /home/$username"
+     else
+          echo "Error: Failed to create user '$username'."
+          exit 1
+     fi
+     
+     # Trigger Postgres population
      if [[ "$SKIP_POSTGRES" != true && -f "./postgres-populate.sh" ]]; then
-          echo "Triggering Postgres provisioning for Student '$generated_username'..."
-          ./postgres-populate.sh --add-student "$generated_username" <<EOF
-$f $l
-$i
-$e
+          echo "Triggering Postgres provisioning for Student '$username'..."
+          ./postgres-populate.sh --add-student "$username" <<EOF
+$name
+$uid
+$email
 EOF
      fi
      
-     # Password for students is UID without dashes
-     pwd_hint=$(echo "$i" | tr -d '-')
-     echo "Student user created successfully."
-     echo "Password: UID without dashes ($pwd_hint)"
+     echo ""
+     echo "=== Student Created Successfully ==="
+     echo "Username: $username"
+     echo "Password: $password (UID without dashes)"
+     echo "Home Directory: /home/$username"
+     echo "====================================="
 fi
 
 echo "All users processed."
