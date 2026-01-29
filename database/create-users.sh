@@ -508,11 +508,7 @@ if [[ "$MODE" == "interactive_student" ]]; then
      # Trigger Postgres population
      if [[ "$SKIP_POSTGRES" != true && -f "./postgres-populate.sh" ]]; then
           echo "Triggering Postgres provisioning for Student '$username'..."
-          ./postgres-populate.sh --add-student "$username" <<EOF
-$name
-$uid
-$email
-EOF
+          ./postgres-populate.sh --add-student "$username" --name "$name" --uid "$uid" --email "$email"
      fi
      
      echo ""

@@ -41,9 +41,24 @@ for arg in "$@"; do
         NEXT_IS_ADMIN_USERS=true
     elif [[ "$arg" == "--student-users" ]]; then
         NEXT_IS_STUDENT_USERS=true
+    elif [[ "$arg" == "--name" ]]; then
+        NEXT_IS_NAME=true
+    elif [[ "$arg" == "--uid" ]]; then
+        NEXT_IS_UID=true
+    elif [[ "$arg" == "--email" ]]; then
+        NEXT_IS_EMAIL=true
     elif [[ "$NEXT_IS_INTERACTIVE_USER" == true ]]; then
         INTERACTIVE_USERNAME="$arg"
         NEXT_IS_INTERACTIVE_USER=false
+    elif [[ "$NEXT_IS_NAME" == true ]]; then
+        INTERACTIVE_NAME="$arg"
+        NEXT_IS_NAME=false
+    elif [[ "$NEXT_IS_UID" == true ]]; then
+        INTERACTIVE_UID="$arg"
+        NEXT_IS_UID=false
+    elif [[ "$NEXT_IS_EMAIL" == true ]]; then
+        INTERACTIVE_EMAIL="$arg"
+        NEXT_IS_EMAIL=false
     elif [[ "$NEXT_IS_ADMIN" == true ]]; then
         ADMIN_FILE="$arg"
         NEXT_IS_ADMIN=false
@@ -137,6 +152,24 @@ echo "Starting PostgreSQL population..."
 # Define database names (needed for all modes)
 ADMIN_DB="admin"
 CS143_DB="cs143"
+
+# FIRST: Ensure Peer Authentication is configured (required for any psql commands to work)
+# This must run for ALL modes, including interactive
+PG_VERSION=$(ls /etc/postgresql/ 2>/dev/null | sort -V | tail -n 1)
+if [[ -n "$PG_VERSION" ]]; then
+    HBA_FILE="/etc/postgresql/$PG_VERSION/main/pg_hba.conf"
+    if [[ -f "$HBA_FILE" ]]; then
+        if ! grep -q "^local[[:space:]]*all[[:space:]]*all[[:space:]]*peer" "$HBA_FILE"; then
+            echo "Configuring Peer Authentication in $HBA_FILE..."
+            echo "local   all             all                                     peer" | cat - "$HBA_FILE" | sudo tee "$HBA_FILE.tmp" > /dev/null
+            sudo mv "$HBA_FILE.tmp" "$HBA_FILE"
+            sudo chown postgres:postgres "$HBA_FILE"
+            sudo chmod 640 "$HBA_FILE"
+            sudo systemctl reload postgresql
+            echo "Peer authentication enabled."
+        fi
+    fi
+fi
 
 # Skip initial setup for interactive modes (assumes prior batch setup)
 if [[ -z "$MODE" ]]; then
@@ -538,13 +571,19 @@ if [[ "$MODE" == "interactive_admin" ]]; then
 fi
 
 if [[ "$MODE" == "interactive_student" ]]; then
-    # Prompt for all required information
+    # Use values from arguments if provided, otherwise prompt
     if [[ -z "$INTERACTIVE_USERNAME" ]]; then
         read -rp "Enter Student Username (must exist in system): " INTERACTIVE_USERNAME
     fi
-    read -rp "Enter Full Name: " INTERACTIVE_NAME
-    read -rp "Enter UID (NNN-NNN-NNN): " INTERACTIVE_UID
-    read -rp "Enter Email: " INTERACTIVE_EMAIL
+    if [[ -z "$INTERACTIVE_NAME" ]]; then
+        read -rp "Enter Full Name: " INTERACTIVE_NAME
+    fi
+    if [[ -z "$INTERACTIVE_UID" ]]; then
+        read -rp "Enter UID: " INTERACTIVE_UID
+    fi
+    if [[ -z "$INTERACTIVE_EMAIL" ]]; then
+        read -rp "Enter Email: " INTERACTIVE_EMAIL
+    fi
     
     username="$INTERACTIVE_USERNAME"
     
