@@ -462,18 +462,29 @@ if [[ "$MODE" == "interactive_student" ]]; then
      read -rp "Enter First Name: " f
      read -rp "Enter Email: " e
      
+     # Generate username using the same algorithm as process_roster_file
+     generated_username=$(propose_username "$f" "$l")
+     if [[ -z "$generated_username" ]]; then
+          echo "Error: Could not generate unique username for $f $l."
+          exit 1
+     fi
+     
      # Create temp CSV matching roster format: UID, "Last, First", Email...
      t=$(mktemp)
      echo "$i,\"$l, $f\",$e,INTERACTIVE,MODE,," > "$t"
      process_roster_file "$t"
+     rm "$t"
      
-     # Trigger Postgres population (pass as 2nd arg)
+     # Trigger Postgres population with the actual username
      if [[ "$SKIP_POSTGRES" != true && -f "./postgres-populate.sh" ]]; then
-          echo "Triggering Postgres provisioning for Student..."
-          ./postgres-populate.sh --roster "$t"
+          echo "Triggering Postgres provisioning for Student '$generated_username'..."
+          ./postgres-populate.sh --add-student "$generated_username" <<EOF
+$f $l
+$i
+$e
+EOF
      fi
      
-     rm "$t"
      # Password for students is UID without dashes
      pwd_hint=$(echo "$i" | tr -d '-')
      echo "Student user created successfully."

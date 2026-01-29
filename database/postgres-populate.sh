@@ -134,8 +134,14 @@ fi
 
 echo "Starting PostgreSQL population..."
 
-# 0. Setup Admin Database (Central Registry)
+# Define database names (needed for all modes)
 ADMIN_DB="admin"
+CS143_DB="cs143"
+
+# Skip initial setup for interactive modes (assumes prior batch setup)
+if [[ -z "$MODE" ]]; then
+
+# 0. Setup Admin Database (Central Registry)
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$ADMIN_DB'" | grep -q 1; then
     sudo -u postgres createdb "$ADMIN_DB"
     echo "Created database '$ADMIN_DB'."
@@ -150,7 +156,6 @@ else
 fi
 
 # 0.5 Setup Student Database (Shared Workspace)
-CS143_DB="cs143"
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$CS143_DB'" | grep -q 1; then
     sudo -u postgres createdb "$CS143_DB"
     echo "Created database '$CS143_DB'."
@@ -209,6 +214,8 @@ echo "Ensured 'students' table exists in '$ADMIN_DB'."
 sudo -u postgres psql -d "$ADMIN_DB" -c "
 SELECT setval('students_student_id_seq', COALESCE((SELECT MAX(student_id) FROM students), 0) + 1, false);
 " >/dev/null 2>&1
+
+fi  # End of initial setup (skipped for interactive modes)
 
 # 1. Provide Postgres Roles and Databases
 # Function to process Admin Postgres
@@ -582,6 +589,9 @@ if [[ "$MODE" == "interactive_student" ]]; then
     echo "Student '$username' provisioned and added to students table."
 fi
 
+# Skip global configuration for interactive modes (assumes prior batch setup)
+if [[ -z "$MODE" ]]; then
+
 # 2. Configure Peer Authentication in pg_hba.conf
 PG_VERSION=$(ls /etc/postgresql/ | sort -V | tail -n 1)
 
@@ -635,4 +645,7 @@ echo "Refreshing usage/select permissions on public schema..."
 sudo -u postgres psql -d "$CS143_DB" -c "GRANT USAGE ON SCHEMA public TO PUBLIC;"
 sudo -u postgres psql -d "$CS143_DB" -c "GRANT SELECT ON ALL TABLES IN SCHEMA public TO PUBLIC;"
 
+fi  # End of global configuration (skipped for interactive modes)
+
 echo "PostgreSQL population complete."
+
