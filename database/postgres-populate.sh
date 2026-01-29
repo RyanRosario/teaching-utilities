@@ -159,14 +159,29 @@ PG_VERSION=$(ls /etc/postgresql/ 2>/dev/null | sort -V | tail -n 1)
 if [[ -n "$PG_VERSION" ]]; then
     HBA_FILE="/etc/postgresql/$PG_VERSION/main/pg_hba.conf"
     if [[ -f "$HBA_FILE" ]]; then
+        NEEDS_RELOAD=false
+        
+        # Fix: Change any md5/scram-sha-256 for postgres user to peer
+        if grep -q "^local[[:space:]]*all[[:space:]]*postgres[[:space:]]*md5" "$HBA_FILE" || \
+           grep -q "^local[[:space:]]*all[[:space:]]*postgres[[:space:]]*scram-sha-256" "$HBA_FILE"; then
+            echo "Fixing postgres user authentication to peer in $HBA_FILE..."
+            sudo sed -i 's/^local[[:space:]]*all[[:space:]]*postgres[[:space:]]*md5$/local   all             postgres                                peer/' "$HBA_FILE"
+            sudo sed -i 's/^local[[:space:]]*all[[:space:]]*postgres[[:space:]]*scram-sha-256$/local   all             postgres                                peer/' "$HBA_FILE"
+            NEEDS_RELOAD=true
+        fi
+        
+        # Ensure general peer auth rule exists
         if ! grep -q "^local[[:space:]]*all[[:space:]]*all[[:space:]]*peer" "$HBA_FILE"; then
-            echo "Configuring Peer Authentication in $HBA_FILE..."
-            echo "local   all             all                                     peer" | cat - "$HBA_FILE" | sudo tee "$HBA_FILE.tmp" > /dev/null
-            sudo mv "$HBA_FILE.tmp" "$HBA_FILE"
-            sudo chown postgres:postgres "$HBA_FILE"
-            sudo chmod 640 "$HBA_FILE"
+            echo "Adding peer authentication for all users in $HBA_FILE..."
+            # Add peer auth line near the top (after any postgres-specific rules)
+            sudo sed -i '/^local.*all.*postgres.*peer/a local   all             all                                     peer' "$HBA_FILE"
+            NEEDS_RELOAD=true
+        fi
+        
+        if [[ "$NEEDS_RELOAD" == true ]]; then
             sudo systemctl reload postgresql
-            echo "Peer authentication enabled."
+            echo "Peer authentication configured and PostgreSQL reloaded."
+            sleep 1  # Give PostgreSQL time to reload
         fi
     fi
 fi
