@@ -162,11 +162,11 @@ if [[ ! -f "$CA_CERT" ]] || [[ ! -f "$SERVER_CERT" ]]; then
 fi
 
 # ==============================================================================
-# HELPER: Run mongosh with admin credentials (TLS mode)
+# HELPER: Run mongosh with admin credentials (TLS mode, password auth)
 # ==============================================================================
 run_mongosh() {
-    mongosh --quiet \
-        --tls --tlsCertificateKeyFile "$SERVER_CERT" --tlsCAFile "$CA_CERT" \
+    /usr/bin/mongosh --quiet \
+        --tls --tlsCAFile "$CA_CERT" \
         -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS" \
         --authenticationDatabase admin \
         --eval "$1"

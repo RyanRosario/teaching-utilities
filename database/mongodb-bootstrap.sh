@@ -231,7 +231,7 @@ _MONGO_USER_DB="$USER"
 # If user has a certificate, set up the alias with their default database
 # Use connection URI to specify both default DB and authSource separately
 if [[ -f "$_MONGO_USER_CERT" && -f "$_MONGO_CA_CERT" ]]; then
-    alias mongosh="mongosh 'mongodb://127.0.0.1:27017/${_MONGO_USER_DB}?authSource=\\\$external' --tls --tlsCertificateKeyFile $_MONGO_USER_CERT --tlsCAFile $_MONGO_CA_CERT --authenticationMechanism MONGODB-X509"
+    alias mongosh="mongosh 'mongodb://127.0.0.1:27017/\${_MONGO_USER_DB}?authSource=\$external' --tls --tlsCertificateKeyFile \$_MONGO_USER_CERT --tlsCAFile \$_MONGO_CA_CERT --authenticationMechanism MONGODB-X509"
 fi
 
 # Cleanup variables
