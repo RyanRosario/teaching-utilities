@@ -262,9 +262,7 @@ provision_admin() {
     
     # Create X.509 user with admin privileges
     run_mongosh "
-        use \$external;
-        try {
-            db.createUser({
+        db.getSiblingDB('\$external').createUser({
                 user: '$subject_dn',
                 roles: [
                     { role: 'readWrite', db: '$COURSE_DB' },
@@ -302,31 +300,19 @@ provision_student() {
     local student_db="$student"
     
     # Create student's personal database
-    run_mongosh "
-        use $student_db;
-        db.createCollection('_init');
-    " 2>/dev/null || true
+    run_mongosh "db.getSiblingDB('$student_db').createCollection('_init');" 2>/dev/null || true
     
     # Create X.509 user with appropriate roles
     run_mongosh "
-        use \$external;
-        try {
-            db.createUser({
-                user: '$subject_dn',
-                roles: [
-                    { role: 'read', db: '$COURSE_DB' },
-                    { role: 'readWrite', db: '$student_db' }
-                ]
-            });
-            print('Created MongoDB user for student: $student');
-        } catch(e) {
-            if (e.codeName === 'DuplicateKey') {
-                print('MongoDB user already exists for: $student');
-            } else {
-                print('Error creating student $student: ' + e.message);
-            }
-        }
-    " 2>/dev/null || true
+        db.getSiblingDB('\$external').createUser({
+            user: '$subject_dn',
+            roles: [
+                { role: 'read', db: '$COURSE_DB' },
+                { role: 'readWrite', db: '$student_db' }
+            ]
+        });
+        print('Created MongoDB user for student: $student');
+    "
 }
 
 grant_admin_access_to_student_db() {
@@ -336,12 +322,9 @@ grant_admin_access_to_student_db() {
     local admin_subject="CN=$admin,OU=Users,O=UCLA,L=Los Angeles,ST=California,C=US"
     
     run_mongosh "
-        use \$external;
-        try {
-            db.grantRolesToUser('$admin_subject', [
-                { role: 'readWrite', db: '$student_db' }
-            ]);
-        } catch(e) { }
+        db.getSiblingDB('\$external').grantRolesToUser('$admin_subject', [
+            { role: 'readWrite', db: '$student_db' }
+        ]);
     " 2>/dev/null || true
 }
 
@@ -384,10 +367,7 @@ provision_batch() {
     # 1. Setup Course Database
     # -------------------------------------------------------------------------
     echo "Setting up course database '$COURSE_DB'..."
-    run_mongosh "
-        use $COURSE_DB;
-        db.createCollection('_init');
-    " 2>/dev/null || true
+    run_mongosh "db.getSiblingDB('$COURSE_DB').createCollection('_init');" 2>/dev/null || true
     
     # -------------------------------------------------------------------------
     # 2. Provision Admins
@@ -471,10 +451,7 @@ provision_interactive() {
     fi
     
     # Ensure course database exists
-    run_mongosh "
-        use $COURSE_DB;
-        db.createCollection('_init');
-    " 2>/dev/null || true
+    run_mongosh "db.getSiblingDB('$COURSE_DB').createCollection('_init');" 2>/dev/null || true
     
     if [[ "$INTERACTIVE_TYPE" == "admin" ]]; then
         provision_admin "$INTERACTIVE_USERNAME"
