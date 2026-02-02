@@ -70,6 +70,7 @@ load_config
 MODE=""
 INTERACTIVE_USERNAME=""
 INTERACTIVE_TYPE=""
+FORCE_REGENERATE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -98,6 +99,10 @@ while [[ $# -gt 0 ]]; do
             INTERACTIVE_USERNAME="$2"
             shift 2
             ;;
+        --force|-f)
+            FORCE_REGENERATE=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -118,6 +123,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --mongo-admin-pass <pass> Override MongoDB admin password from config"
             echo "  --add-admin <username>    Add a single admin user (interactive mode)"
             echo "  --add-student <username>  Add a single student user (interactive mode)"
+            echo "  --force, -f               Force regeneration of certificates and users"
             echo "  --help, -h                Show this help message"
             echo ""
             echo "Examples:"
@@ -175,8 +181,13 @@ generate_client_cert() {
     local user_cert="$user_cert_dir/mongodb.pem"
     
     if [[ -f "$user_cert" ]]; then
-        echo "Certificate for $username already exists."
-        return
+        if [[ "$FORCE_REGENERATE" == true ]]; then
+            echo "Force regenerating certificate for $username..."
+            sudo rm -rf "$user_cert_dir"
+        else
+            echo "Certificate for $username already exists. Use --force to regenerate."
+            return
+        fi
     fi
     
     echo "Generating client certificate for: $username"
