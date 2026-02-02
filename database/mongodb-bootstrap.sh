@@ -13,6 +13,10 @@ set -e
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/mongodb-config.json"
+
+# Default values
 MONGO_ADMIN_USER="mongoadmin"
 MONGO_ADMIN_PASS=""
 
@@ -27,16 +31,44 @@ CLIENT_CERT_DIR="/etc/mongodb/client-certs"
 AUDIT_LOG_PATH="/var/log/mongodb/audit.json"
 
 # ==============================================================================
-# ARGUMENT PARSING
+# LOAD CONFIG FILE
+# ==============================================================================
+load_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # Check if jq is available
+        if command -v jq > /dev/null 2>&1; then
+            MONGO_ADMIN_USER=$(jq -r '.mongo_admin_user // "mongoadmin"' "$CONFIG_FILE")
+            MONGO_ADMIN_PASS=$(jq -r '.mongo_admin_pass // ""' "$CONFIG_FILE")
+            echo "Loaded configuration from $CONFIG_FILE"
+        else
+            echo "Warning: jq not installed. Cannot read config file."
+            echo "Install with: sudo apt install jq"
+        fi
+    else
+        echo "Warning: Config file not found: $CONFIG_FILE"
+        echo "Using default values. Create mongodb-config.json to configure."
+    fi
+}
+
+# Load config first (can be overridden by command-line args)
+load_config
+
+# ==============================================================================
+# ARGUMENT PARSING (overrides config file)
 # ==============================================================================
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --config)
+            CONFIG_FILE="$2"
+            load_config
+            shift 2
+            ;;
         --mongo-admin-pass)
             MONGO_ADMIN_PASS="$2"
             shift 2
             ;;
         --help|-h)
-            echo "Usage: $0 --mongo-admin-pass <password>"
+            echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "This script installs and configures Percona Server for MongoDB with:"
             echo "  - Percona Server for MongoDB 8.0 (free Enterprise features)"
@@ -45,9 +77,11 @@ while [[ $# -gt 0 ]]; do
             echo "  - 100-day log retention"
             echo ""
             echo "Options:"
-            echo "  --mongo-admin-pass <pass> Password for MongoDB admin user (required)"
+            echo "  --config <file>           Path to config file (default: mongodb-config.json)"
+            echo "  --mongo-admin-pass <pass> Override MongoDB admin password from config"
             echo "  --help, -h                Show this help message"
             echo ""
+            echo "Configuration is read from mongodb-config.json. Command-line args override."
             echo "After running this script, run mongodb-populate.sh to provision users."
             exit 0
             ;;
@@ -60,8 +94,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$MONGO_ADMIN_PASS" ]]; then
-    echo "Error: --mongo-admin-pass is required."
-    echo "Usage: $0 --mongo-admin-pass <password>"
+    echo "Error: MongoDB admin password not set."
+    echo "Set 'mongo_admin_pass' in $CONFIG_FILE or use --mongo-admin-pass"
     exit 1
 fi
 

@@ -15,6 +15,10 @@ set -e
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/mongodb-config.json"
+
+# Default values
 COURSE_DB="msba405"
 ADMIN_FILE=""
 MONGO_ADMIN_USER="mongoadmin"
@@ -28,7 +32,40 @@ SERVER_CERT="$CERT_DIR/server.pem"
 CLIENT_CERT_DIR="/etc/mongodb/client-certs"
 
 # ==============================================================================
-# ARGUMENT PARSING
+# LOAD CONFIG FILE
+# ==============================================================================
+load_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        # Check if jq is available
+        if command -v jq > /dev/null 2>&1; then
+            MONGO_ADMIN_USER=$(jq -r '.mongo_admin_user // "mongoadmin"' "$CONFIG_FILE")
+            MONGO_ADMIN_PASS=$(jq -r '.mongo_admin_pass // ""' "$CONFIG_FILE")
+            COURSE_DB=$(jq -r '.course_db // "msba405"' "$CONFIG_FILE")
+            local cfg_admin_file=$(jq -r '.admin_users_file // ""' "$CONFIG_FILE")
+            if [[ -n "$cfg_admin_file" && -z "$ADMIN_FILE" ]]; then
+                # Resolve relative path from config file location
+                if [[ "$cfg_admin_file" != /* ]]; then
+                    ADMIN_FILE="$SCRIPT_DIR/$cfg_admin_file"
+                else
+                    ADMIN_FILE="$cfg_admin_file"
+                fi
+            fi
+            echo "Loaded configuration from $CONFIG_FILE"
+        else
+            echo "Warning: jq not installed. Cannot read config file."
+            echo "Install with: sudo apt install jq"
+        fi
+    else
+        echo "Warning: Config file not found: $CONFIG_FILE"
+        echo "Using default values. Create mongodb-config.json to configure."
+    fi
+}
+
+# Load config first (can be overridden by command-line args)
+load_config
+
+# ==============================================================================
+# ARGUMENT PARSING (overrides config file)
 # ==============================================================================
 MODE=""
 INTERACTIVE_USERNAME=""
@@ -36,6 +73,11 @@ INTERACTIVE_TYPE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --config)
+            CONFIG_FILE="$2"
+            load_config
+            shift 2
+            ;;
         --admin-users)
             ADMIN_FILE="$2"
             shift 2
@@ -60,31 +102,35 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "This script provisions MongoDB user accounts and databases:"
-            echo "  - Course database ($COURSE_DB): admins read/write, students read-only"
+            echo "  - Course database: admins read/write, students read-only"
             echo "  - Per-student databases: <username>_db with read/write for owner"
             echo "  - X.509 certificates for passwordless authentication"
             echo ""
-            echo "Batch Mode Options:"
-            echo "  --admin-users <file>      Text file with admin usernames (one per line)"
-            echo "  --mongo-admin-pass <pass> Password for MongoDB admin (required)"
+            echo "Configuration is read from mongodb-config.json:"
+            echo "  - mongo_admin_user: MongoDB admin username"
+            echo "  - mongo_admin_pass: MongoDB admin password"
+            echo "  - course_db: Course database name (default: msba405)"
+            echo "  - admin_users_file: Path to admin usernames file"
             echo ""
-            echo "Interactive Mode Options:"
-            echo "  --add-admin <username>    Add a single admin user"
-            echo "  --add-student <username>  Add a single student user"
-            echo "  --mongo-admin-pass <pass> Password for MongoDB admin (required)"
+            echo "Options:"
+            echo "  --config <file>           Path to config file (default: mongodb-config.json)"
+            echo "  --admin-users <file>      Override admin users file from config"
+            echo "  --mongo-admin-pass <pass> Override MongoDB admin password from config"
+            echo "  --add-admin <username>    Add a single admin user (interactive mode)"
+            echo "  --add-student <username>  Add a single student user (interactive mode)"
+            echo "  --help, -h                Show this help message"
             echo ""
             echo "Examples:"
-            echo "  # Batch provisioning"
-            echo "  $0 --admin-users admin.txt --mongo-admin-pass secret"
+            echo "  # Batch provisioning (uses config file)"
+            echo "  $0"
             echo ""
             echo "  # Add single admin"
-            echo "  $0 --add-admin jsmith --mongo-admin-pass secret"
+            echo "  $0 --add-admin jsmith"
             echo ""
             echo "  # Add single student"
-            echo "  $0 --add-student jdoe --mongo-admin-pass secret"
+            echo "  $0 --add-student jdoe"
             echo ""
             echo "Students are automatically loaded from PostgreSQL admin.students table."
-            echo "Ensure postgres-populate.sh has been run first."
             exit 0
             ;;
         *)
@@ -97,8 +143,8 @@ done
 
 # Validate required arguments
 if [[ -z "$MONGO_ADMIN_PASS" ]]; then
-    echo "Error: --mongo-admin-pass is required."
-    echo "Use --help for usage information."
+    echo "Error: MongoDB admin password not set."
+    echo "Set 'mongo_admin_pass' in $CONFIG_FILE or use --mongo-admin-pass"
     exit 1
 fi
 

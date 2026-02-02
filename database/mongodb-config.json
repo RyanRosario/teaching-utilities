@@ -1,0 +1,6 @@
+{
+    "mongo_admin_user": "mongoadmin",
+    "mongo_admin_pass": "",
+    "course_db": "msba405",
+    "admin_users_file": "admin.txt"
+}
