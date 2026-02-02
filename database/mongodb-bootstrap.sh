@@ -302,6 +302,7 @@ net:
     mode: requireTLS
     certificateKeyFile: $SERVER_CERT
     CAFile: $CA_CERT
+    allowConnectionsWithoutCertificates: true
 
 security:
   authorization: enabled
