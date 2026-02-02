@@ -261,23 +261,16 @@ provision_admin() {
     local admin_db="$admin"
     
     # Create X.509 user with admin privileges
+    # Admins get: readWriteAnyDatabase (create/manage any DB), dbAdminAnyDatabase (admin any DB)
     run_mongosh "
         db.getSiblingDB('\$external').createUser({
-                user: '$subject_dn',
-                roles: [
-                    { role: 'readWrite', db: '$COURSE_DB' },
-                    { role: 'dbAdmin', db: '$COURSE_DB' },
-                    { role: 'readWrite', db: '$admin_db' }
-                ]
-            });
-            print('Created MongoDB user for admin: $admin');
-        } catch(e) {
-            if (e.codeName === 'DuplicateKey') {
-                print('MongoDB user already exists for: $admin');
-            } else {
-                print('Error creating admin $admin: ' + e.message);
-            }
-        }
+            user: '$subject_dn',
+            roles: [
+                { role: 'readWriteAnyDatabase', db: 'admin' },
+                { role: 'dbAdminAnyDatabase', db: 'admin' }
+            ]
+        });
+        print('Created MongoDB user for admin: $admin');
     " 2>/dev/null || true
 }
 
