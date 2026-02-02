@@ -156,11 +156,13 @@ install_mongodb() {
 generate_server_certificates() {
     echo "Generating X.509 certificates for TLS..."
     
-    # Create certificate directories with proper ownership for mongod
+    # Create certificate directories
+    # CERT_DIR needs 755 so clients can read the CA cert for verification
+    # Sensitive files (keys, server cert) are protected individually
     sudo mkdir -p "$CERT_DIR"
     sudo mkdir -p "$CLIENT_CERT_DIR"
     sudo chown mongod:mongod "$CERT_DIR"
-    sudo chmod 700 "$CERT_DIR"
+    sudo chmod 755 "$CERT_DIR"
     sudo chmod 755 "$CLIENT_CERT_DIR"
     
     # Generate CA certificate (if not exists)
