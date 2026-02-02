@@ -123,18 +123,9 @@ install_mongodb() {
     # 4. Update package cache
     sudo apt update
 
-    # 5. Install Percona Server for MongoDB
+    # 5. Install Percona Server for MongoDB (includes mongosh)
     echo "Installing Percona Server for MongoDB..."
-    sudo apt install -y percona-server-mongodb
-
-    # 6. Install mongosh (MongoDB Shell) - Percona uses standard mongosh
-    echo "Installing mongosh client..."
-    if [[ ! -f /usr/share/keyrings/mongodb-server-8.0.gpg ]]; then
-        curl -fsSL https://pgp.mongodb.com/server-8.0.asc | sudo gpg --dearmor --yes -o /usr/share/keyrings/mongodb-server-8.0.gpg
-        echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -sc)/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
-        sudo apt update
-    fi
-    sudo apt install -y mongodb-mongosh
+    sudo apt install -y percona-server-mongodb percona-mongodb-mongosh
 
     # 7. Start and enable MongoDB service (initially without auth for setup)
     echo "Starting MongoDB service..."
