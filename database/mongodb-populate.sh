@@ -164,22 +164,11 @@ fi
 
 # ==============================================================================
 # HELPER: Run mongosh with admin credentials (TLS mode, password auth)
-# Note: Uses connection string to properly handle special characters in password
 # ==============================================================================
 run_mongosh() {
     local eval_cmd="$1"
-    
-    # Write password to temp file to avoid shell expansion, then URL-encode it
-    local tmpfile
-    tmpfile=$(mktemp)
-    printf '%s' "$MONGO_ADMIN_PASS" > "$tmpfile"
-    
-    local encoded_pass
-    encoded_pass=$(python3 -c "import urllib.parse; print(urllib.parse.quote(open('$tmpfile').read(), safe=''))")
-    rm -f "$tmpfile"
-    
     /usr/bin/mongosh --quiet \
-        "mongodb://${MONGO_ADMIN_USER}:${encoded_pass}@127.0.0.1:27017/admin?tls=true&tlsCAFile=${CA_CERT}&authSource=admin" \
+        "mongodb://${MONGO_ADMIN_USER}:${MONGO_ADMIN_PASS}@127.0.0.1:27017/admin?tls=true&tlsCAFile=${CA_CERT}&authSource=admin" \
         --eval "$eval_cmd"
 }
 
