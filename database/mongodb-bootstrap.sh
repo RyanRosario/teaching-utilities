@@ -156,9 +156,10 @@ install_mongodb() {
 generate_server_certificates() {
     echo "Generating X.509 certificates for TLS..."
     
-    # Create certificate directories
+    # Create certificate directories with proper ownership for mongod
     sudo mkdir -p "$CERT_DIR"
     sudo mkdir -p "$CLIENT_CERT_DIR"
+    sudo chown mongod:mongod "$CERT_DIR"
     sudo chmod 700 "$CERT_DIR"
     sudo chmod 755 "$CLIENT_CERT_DIR"
     
@@ -168,6 +169,7 @@ generate_server_certificates() {
         sudo openssl genrsa -out "$CA_KEY" 4096
         sudo openssl req -new -x509 -days 3650 -key "$CA_KEY" -out "$CA_CERT" \
             -subj "/C=US/ST=California/L=Los Angeles/O=UCLA/OU=MSBA/CN=MongoDB-CA"
+        sudo chown mongod:mongod "$CA_KEY" "$CA_CERT"
         sudo chmod 600 "$CA_KEY"
         sudo chmod 644 "$CA_CERT"
     fi
