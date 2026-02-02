@@ -1,0 +1,451 @@
+#!/bin/bash
+
+# Percona Server for MongoDB Population Script
+# This script provisions user accounts and database permissions:
+#   - Creates msba405 database: admins read/write, students read-only
+#   - Creates per-student databases: each student has their own private database
+#   - Generates X.509 client certificates for passwordless authentication
+#
+# Prerequisites: Run mongodb-bootstrap.sh first.
+# Students are read from PostgreSQL admin.students table.
+# Admins are read from a text file (one username per line).
+
+set -e
+
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
+COURSE_DB="msba405"
+ADMIN_FILE=""
+MONGO_ADMIN_USER="mongoadmin"
+MONGO_ADMIN_PASS=""
+
+# Certificate configuration
+CERT_DIR="/etc/mongodb/ssl"
+CA_CERT="$CERT_DIR/ca.pem"
+CA_KEY="$CERT_DIR/ca-key.pem"
+SERVER_CERT="$CERT_DIR/server.pem"
+CLIENT_CERT_DIR="/etc/mongodb/client-certs"
+
+# ==============================================================================
+# ARGUMENT PARSING
+# ==============================================================================
+MODE=""
+INTERACTIVE_USERNAME=""
+INTERACTIVE_TYPE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --admin-users)
+            ADMIN_FILE="$2"
+            shift 2
+            ;;
+        --mongo-admin-pass)
+            MONGO_ADMIN_PASS="$2"
+            shift 2
+            ;;
+        --add-admin)
+            MODE="interactive"
+            INTERACTIVE_TYPE="admin"
+            INTERACTIVE_USERNAME="$2"
+            shift 2
+            ;;
+        --add-student)
+            MODE="interactive"
+            INTERACTIVE_TYPE="student"
+            INTERACTIVE_USERNAME="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "This script provisions MongoDB user accounts and databases:"
+            echo "  - Course database ($COURSE_DB): admins read/write, students read-only"
+            echo "  - Per-student databases: <username>_db with read/write for owner"
+            echo "  - X.509 certificates for passwordless authentication"
+            echo ""
+            echo "Batch Mode Options:"
+            echo "  --admin-users <file>      Text file with admin usernames (one per line)"
+            echo "  --mongo-admin-pass <pass> Password for MongoDB admin (required)"
+            echo ""
+            echo "Interactive Mode Options:"
+            echo "  --add-admin <username>    Add a single admin user"
+            echo "  --add-student <username>  Add a single student user"
+            echo "  --mongo-admin-pass <pass> Password for MongoDB admin (required)"
+            echo ""
+            echo "Examples:"
+            echo "  # Batch provisioning"
+            echo "  $0 --admin-users admin.txt --mongo-admin-pass secret"
+            echo ""
+            echo "  # Add single admin"
+            echo "  $0 --add-admin jsmith --mongo-admin-pass secret"
+            echo ""
+            echo "  # Add single student"
+            echo "  $0 --add-student jdoe --mongo-admin-pass secret"
+            echo ""
+            echo "Students are automatically loaded from PostgreSQL admin.students table."
+            echo "Ensure postgres-populate.sh has been run first."
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information."
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$MONGO_ADMIN_PASS" ]]; then
+    echo "Error: --mongo-admin-pass is required."
+    echo "Use --help for usage information."
+    exit 1
+fi
+
+# Verify MongoDB is configured
+if [[ ! -f "$CA_CERT" ]] || [[ ! -f "$SERVER_CERT" ]]; then
+    echo "Error: MongoDB certificates not found."
+    echo "Please run mongodb-bootstrap.sh first."
+    exit 1
+fi
+
+# ==============================================================================
+# HELPER: Run mongosh with admin credentials (TLS mode)
+# ==============================================================================
+run_mongosh() {
+    mongosh --quiet \
+        --tls --tlsCertificateKeyFile "$SERVER_CERT" --tlsCAFile "$CA_CERT" \
+        -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS" \
+        --authenticationDatabase admin \
+        --eval "$1"
+}
+
+# ==============================================================================
+# CERTIFICATE GENERATION
+# ==============================================================================
+generate_client_cert() {
+    local username="$1"
+    local user_cert_dir="$CLIENT_CERT_DIR/$username"
+    local user_cert="$user_cert_dir/mongodb.pem"
+    
+    if [[ -f "$user_cert" ]]; then
+        echo "Certificate for $username already exists."
+        return
+    fi
+    
+    echo "Generating client certificate for: $username"
+    
+    sudo mkdir -p "$user_cert_dir"
+    
+    # Generate user's private key and CSR
+    sudo openssl genrsa -out "$user_cert_dir/key.pem" 4096
+    
+    # The CN must match the MongoDB username
+    # MongoDB uses the full subject DN as the username for X.509 auth
+    sudo openssl req -new -key "$user_cert_dir/key.pem" -out "$user_cert_dir/user.csr" \
+        -subj "/C=US/ST=California/L=Los Angeles/O=UCLA/OU=MSBA/CN=$username"
+    
+    # Create extension file for client auth
+    cat << EOF | sudo tee "$user_cert_dir/client-ext.cnf"
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
+extendedKeyUsage = clientAuth
+EOF
+    
+    # Sign with CA
+    sudo openssl x509 -req -days 365 -in "$user_cert_dir/user.csr" \
+        -CA "$CA_CERT" -CAkey "$CA_KEY" -CAcreateserial \
+        -out "$user_cert_dir/cert.pem" -extfile "$user_cert_dir/client-ext.cnf"
+    
+    # Combine key and cert
+    sudo cat "$user_cert_dir/key.pem" "$user_cert_dir/cert.pem" | sudo tee "$user_cert" > /dev/null
+    
+    # Set ownership so user can read their cert
+    if id "$username" &>/dev/null; then
+        sudo chown -R "$username:$username" "$user_cert_dir"
+        sudo chmod 700 "$user_cert_dir"
+        sudo chmod 600 "$user_cert"
+        
+        # Create convenience symlink in user's home directory
+        local user_home=$(eval echo "~$username")
+        if [[ -d "$user_home" ]]; then
+            sudo mkdir -p "$user_home/.mongodb"
+            sudo ln -sf "$user_cert" "$user_home/.mongodb/client.pem"
+            sudo ln -sf "$CA_CERT" "$user_home/.mongodb/ca.pem"
+            sudo chown -R "$username:$username" "$user_home/.mongodb"
+        fi
+    fi
+    
+    # Cleanup CSR and extension file
+    sudo rm -f "$user_cert_dir/user.csr" "$user_cert_dir/client-ext.cnf"
+}
+
+# ==============================================================================
+# USER PROVISIONING FUNCTIONS
+# ==============================================================================
+
+provision_admin() {
+    local admin="$1"
+    
+    echo "Provisioning admin: $admin"
+    
+    # Verify Unix user exists
+    if ! id "$admin" &>/dev/null; then
+        echo "Warning: Unix user '$admin' does not exist. Skipping."
+        return
+    fi
+    
+    # Generate client certificate
+    generate_client_cert "$admin"
+    
+    # The X.509 subject DN becomes the MongoDB username
+    local subject_dn="CN=$admin,OU=MSBA,O=UCLA,L=Los Angeles,ST=California,C=US"
+    
+    # Create X.509 user with admin privileges
+    run_mongosh "
+        use \$external;
+        try {
+            db.createUser({
+                user: '$subject_dn',
+                roles: [
+                    { role: 'readWrite', db: '$COURSE_DB' },
+                    { role: 'dbAdmin', db: '$COURSE_DB' }
+                ]
+            });
+            print('Created MongoDB user for admin: $admin');
+        } catch(e) {
+            if (e.codeName === 'DuplicateKey') {
+                print('MongoDB user already exists for: $admin');
+            } else {
+                print('Error creating admin $admin: ' + e.message);
+            }
+        }
+    " 2>/dev/null || true
+}
+
+provision_student() {
+    local student="$1"
+    
+    echo "Provisioning student: $student"
+    
+    # Verify Unix user exists
+    if ! id "$student" &>/dev/null; then
+        echo "Warning: Unix user '$student' does not exist. Skipping."
+        return
+    fi
+    
+    # Generate client certificate
+    generate_client_cert "$student"
+    
+    local subject_dn="CN=$student,OU=MSBA,O=UCLA,L=Los Angeles,ST=California,C=US"
+    local student_db="${student}_db"
+    
+    # Create student's personal database
+    run_mongosh "
+        use $student_db;
+        db.createCollection('_init');
+    " 2>/dev/null || true
+    
+    # Create X.509 user with appropriate roles
+    run_mongosh "
+        use \$external;
+        try {
+            db.createUser({
+                user: '$subject_dn',
+                roles: [
+                    { role: 'read', db: '$COURSE_DB' },
+                    { role: 'readWrite', db: '$student_db' }
+                ]
+            });
+            print('Created MongoDB user for student: $student');
+        } catch(e) {
+            if (e.codeName === 'DuplicateKey') {
+                print('MongoDB user already exists for: $student');
+            } else {
+                print('Error creating student $student: ' + e.message);
+            }
+        }
+    " 2>/dev/null || true
+}
+
+grant_admin_access_to_student_db() {
+    local admin="$1"
+    local student_db="$2"
+    
+    local admin_subject="CN=$admin,OU=MSBA,O=UCLA,L=Los Angeles,ST=California,C=US"
+    
+    run_mongosh "
+        use \$external;
+        try {
+            db.grantRolesToUser('$admin_subject', [
+                { role: 'readWrite', db: '$student_db' }
+            ]);
+        } catch(e) { }
+    " 2>/dev/null || true
+}
+
+# ==============================================================================
+# BATCH PROVISIONING
+# ==============================================================================
+provision_batch() {
+    echo "Starting batch provisioning..."
+    
+    # Read admin usernames from file
+    declare -a ADMINS=()
+    if [[ -n "$ADMIN_FILE" && -f "$ADMIN_FILE" ]]; then
+        while IFS= read -r username || [ -n "$username" ]; do
+            username=$(echo "$username" | tr -d '\r' | xargs)
+            if [[ -n "$username" && ! "$username" == \#* ]]; then
+                ADMINS+=("$username")
+            fi
+        done < "$ADMIN_FILE"
+        echo "Loaded ${#ADMINS[@]} admins from $ADMIN_FILE"
+    else
+        echo "Warning: No admin file specified or file not found."
+        echo "Use --admin-users <file> to specify admin usernames."
+    fi
+    
+    # Read student usernames from PostgreSQL
+    declare -a STUDENTS=()
+    if command -v psql > /dev/null 2>&1; then
+        while IFS= read -r username; do
+            username=$(echo "$username" | xargs)
+            if [[ -n "$username" ]]; then
+                STUDENTS+=("$username")
+            fi
+        done < <(sudo -u postgres psql -d admin -tAc "SELECT username FROM students;" 2>/dev/null)
+        echo "Loaded ${#STUDENTS[@]} students from PostgreSQL admin.students"
+    else
+        echo "Warning: psql not found. Cannot load students from PostgreSQL."
+    fi
+    
+    # -------------------------------------------------------------------------
+    # 1. Setup Course Database
+    # -------------------------------------------------------------------------
+    echo "Setting up course database '$COURSE_DB'..."
+    run_mongosh "
+        use $COURSE_DB;
+        db.createCollection('_init');
+    " 2>/dev/null || true
+    
+    # -------------------------------------------------------------------------
+    # 2. Provision Admins
+    # -------------------------------------------------------------------------
+    for admin in "${ADMINS[@]}"; do
+        provision_admin "$admin"
+    done
+    
+    # -------------------------------------------------------------------------
+    # 3. Provision Students
+    # -------------------------------------------------------------------------
+    for student in "${STUDENTS[@]}"; do
+        # Skip if student is also an admin
+        is_admin=false
+        for admin in "${ADMINS[@]}"; do
+            if [[ "$student" == "$admin" ]]; then
+                is_admin=true
+                break
+            fi
+        done
+        
+        if [[ "$is_admin" == "false" ]]; then
+            provision_student "$student"
+        fi
+    done
+    
+    # -------------------------------------------------------------------------
+    # 4. Grant admins access to all student databases
+    # -------------------------------------------------------------------------
+    echo "Granting admins access to student databases..."
+    for admin in "${ADMINS[@]}"; do
+        for student in "${STUDENTS[@]}"; do
+            grant_admin_access_to_student_db "$admin" "${student}_db"
+        done
+    done
+    
+    echo ""
+    echo "=============================================="
+    echo "Batch Provisioning Complete"
+    echo "=============================================="
+    echo ""
+    echo "Summary:"
+    echo "  - Course database: $COURSE_DB"
+    echo "  - Admins provisioned: ${#ADMINS[@]}"
+    echo "  - Students provisioned: ${#STUDENTS[@]}"
+    echo ""
+    echo "Passwordless Access:"
+    echo "  Users can simply run 'mongosh' - no password required!"
+    echo "  Certificates stored in: $CLIENT_CERT_DIR/<username>/"
+    echo "=============================================="
+}
+
+# ==============================================================================
+# INTERACTIVE PROVISIONING
+# ==============================================================================
+provision_interactive() {
+    echo "Interactive provisioning: $INTERACTIVE_TYPE - $INTERACTIVE_USERNAME"
+    
+    if [[ -z "$INTERACTIVE_USERNAME" ]]; then
+        echo "Error: Username is required."
+        exit 1
+    fi
+    
+    # Ensure course database exists
+    run_mongosh "
+        use $COURSE_DB;
+        db.createCollection('_init');
+    " 2>/dev/null || true
+    
+    if [[ "$INTERACTIVE_TYPE" == "admin" ]]; then
+        provision_admin "$INTERACTIVE_USERNAME"
+        
+        # Grant access to existing student databases
+        echo "Granting access to existing student databases..."
+        if command -v psql > /dev/null 2>&1; then
+            while IFS= read -r student; do
+                student=$(echo "$student" | xargs)
+                if [[ -n "$student" ]]; then
+                    grant_admin_access_to_student_db "$INTERACTIVE_USERNAME" "${student}_db"
+                fi
+            done < <(sudo -u postgres psql -d admin -tAc "SELECT username FROM students;" 2>/dev/null)
+        fi
+        
+        echo ""
+        echo "Admin '$INTERACTIVE_USERNAME' provisioned successfully!"
+        
+    elif [[ "$INTERACTIVE_TYPE" == "student" ]]; then
+        provision_student "$INTERACTIVE_USERNAME"
+        
+        # Grant existing admins access to this student's database
+        echo "Granting admins access to new student database..."
+        if [[ -n "$ADMIN_FILE" && -f "$ADMIN_FILE" ]]; then
+            while IFS= read -r admin || [ -n "$admin" ]; do
+                admin=$(echo "$admin" | tr -d '\r' | xargs)
+                if [[ -n "$admin" && ! "$admin" == \#* ]]; then
+                    grant_admin_access_to_student_db "$admin" "${INTERACTIVE_USERNAME}_db"
+                fi
+            done < "$ADMIN_FILE"
+        fi
+        
+        echo ""
+        echo "Student '$INTERACTIVE_USERNAME' provisioned successfully!"
+    fi
+    
+    echo ""
+    echo "The user can now connect with: mongosh"
+}
+
+# ==============================================================================
+# MAIN EXECUTION
+# ==============================================================================
+
+echo "=============================================="
+echo "Percona Server for MongoDB - User Provisioning"
+echo "=============================================="
+echo ""
+
+if [[ "$MODE" == "interactive" ]]; then
+    provision_interactive
+else
+    provision_batch
+fi
