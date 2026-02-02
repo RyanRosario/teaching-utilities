@@ -108,7 +108,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "This script provisions MongoDB user accounts and databases:"
             echo "  - Course database: admins read/write, students read-only"
-            echo "  - Per-student databases: <username>_db with read/write for owner"
+            echo "  - Per-student databases: <username> with read/write for owner"
             echo "  - X.509 certificates for passwordless authentication"
             echo ""
             echo "Configuration is read from mongodb-config.json:"
@@ -420,9 +420,28 @@ provision_batch() {
     echo "Granting admins access to student databases..."
     for admin in "${ADMINS[@]}"; do
         for student in "${STUDENTS[@]}"; do
-            grant_admin_access_to_student_db "$admin" "${student}_db"
+            grant_admin_access_to_student_db "$admin" "$student"
         done
     done
+    
+    # -------------------------------------------------------------------------
+    # 5. Update system-wide mongosh alias
+    # -------------------------------------------------------------------------
+    echo "Updating system-wide mongosh alias..."
+    sudo tee /etc/profile.d/mongosh.sh > /dev/null << 'PROFILE_EOF'
+#!/bin/bash
+_MONGO_CLIENT_CERT_DIR="/etc/mongodb/client-certs"
+_MONGO_CA_CERT="/etc/mongodb/ssl/ca.pem"
+_MONGO_USER_CERT="$_MONGO_CLIENT_CERT_DIR/$USER/mongodb.pem"
+_MONGO_USER_DB="$USER"
+
+if [[ -f "$_MONGO_USER_CERT" && -f "$_MONGO_CA_CERT" ]]; then
+    alias mongosh="mongosh 'mongodb://127.0.0.1:27017/${_MONGO_USER_DB}?authSource=\$external' --tls --tlsCertificateKeyFile ${_MONGO_USER_CERT} --tlsCAFile ${_MONGO_CA_CERT} --authenticationMechanism MONGODB-X509"
+fi
+
+unset _MONGO_CLIENT_CERT_DIR _MONGO_CA_CERT _MONGO_USER_CERT _MONGO_USER_DB
+PROFILE_EOF
+    sudo chmod 644 /etc/profile.d/mongosh.sh
     
     echo ""
     echo "=============================================="
@@ -466,7 +485,7 @@ provision_interactive() {
             while IFS= read -r student; do
                 student=$(echo "$student" | xargs)
                 if [[ -n "$student" ]]; then
-                    grant_admin_access_to_student_db "$INTERACTIVE_USERNAME" "${student}_db"
+                    grant_admin_access_to_student_db "$INTERACTIVE_USERNAME" "$student"
                 fi
             done < <(sudo -u postgres psql -d admin -tAc "SELECT username FROM students;" 2>/dev/null)
         fi
@@ -483,7 +502,7 @@ provision_interactive() {
             while IFS= read -r admin || [ -n "$admin" ]; do
                 admin=$(echo "$admin" | tr -d '\r' | xargs)
                 if [[ -n "$admin" && ! "$admin" == \#* ]]; then
-                    grant_admin_access_to_student_db "$admin" "${INTERACTIVE_USERNAME}_db"
+                    grant_admin_access_to_student_db "$admin" "$INTERACTIVE_USERNAME"
                 fi
             done < "$ADMIN_FILE"
         fi
@@ -491,6 +510,23 @@ provision_interactive() {
         echo ""
         echo "Student '$INTERACTIVE_USERNAME' provisioned successfully!"
     fi
+    
+    # Update system-wide mongosh alias
+    echo "Updating system-wide mongosh alias..."
+    sudo tee /etc/profile.d/mongosh.sh > /dev/null << 'PROFILE_EOF'
+#!/bin/bash
+_MONGO_CLIENT_CERT_DIR="/etc/mongodb/client-certs"
+_MONGO_CA_CERT="/etc/mongodb/ssl/ca.pem"
+_MONGO_USER_CERT="$_MONGO_CLIENT_CERT_DIR/$USER/mongodb.pem"
+_MONGO_USER_DB="$USER"
+
+if [[ -f "$_MONGO_USER_CERT" && -f "$_MONGO_CA_CERT" ]]; then
+    alias mongosh="mongosh 'mongodb://127.0.0.1:27017/${_MONGO_USER_DB}?authSource=\$external' --tls --tlsCertificateKeyFile ${_MONGO_USER_CERT} --tlsCAFile ${_MONGO_CA_CERT} --authenticationMechanism MONGODB-X509"
+fi
+
+unset _MONGO_CLIENT_CERT_DIR _MONGO_CA_CERT _MONGO_USER_CERT _MONGO_USER_DB
+PROFILE_EOF
+    sudo chmod 644 /etc/profile.d/mongosh.sh
     
     echo ""
     echo "The user can now connect with: mongosh"
