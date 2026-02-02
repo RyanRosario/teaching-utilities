@@ -188,8 +188,9 @@ generate_client_cert() {
     
     # The CN must match the MongoDB username
     # MongoDB uses the full subject DN as the username for X.509 auth
+    # IMPORTANT: Use different OU than server cert to avoid "internal cluster member" error
     sudo openssl req -new -key "$user_cert_dir/key.pem" -out "$user_cert_dir/user.csr" \
-        -subj "/C=US/ST=California/L=Los Angeles/O=UCLA/OU=MSBA/CN=$username"
+        -subj "/C=US/ST=California/L=Los Angeles/O=UCLA/OU=Users/CN=$username"
     
     # Create extension file for client auth
     cat << EOF | sudo tee "$user_cert_dir/client-ext.cnf"
@@ -244,8 +245,9 @@ provision_admin() {
     # Generate client certificate
     generate_client_cert "$admin"
     
-    # The X.509 subject DN becomes the MongoDB username
-    local subject_dn="CN=$admin,OU=MSBA,O=UCLA,L=Los Angeles,ST=California,C=US"
+    # The X.509 subject DN becomes the MongoDB username (RFC 2253 format, OU=Users to avoid cluster member error)
+    local subject_dn="CN=$admin,OU=Users,O=UCLA,L=Los Angeles,ST=California,C=US"
+    local admin_db="$admin"
     
     # Create X.509 user with admin privileges
     run_mongosh "
@@ -255,7 +257,8 @@ provision_admin() {
                 user: '$subject_dn',
                 roles: [
                     { role: 'readWrite', db: '$COURSE_DB' },
-                    { role: 'dbAdmin', db: '$COURSE_DB' }
+                    { role: 'dbAdmin', db: '$COURSE_DB' },
+                    { role: 'readWrite', db: '$admin_db' }
                 ]
             });
             print('Created MongoDB user for admin: $admin');
@@ -283,8 +286,9 @@ provision_student() {
     # Generate client certificate
     generate_client_cert "$student"
     
-    local subject_dn="CN=$student,OU=MSBA,O=UCLA,L=Los Angeles,ST=California,C=US"
-    local student_db="${student}_db"
+    # RFC 2253 format DN with OU=Users to avoid cluster member error
+    local subject_dn="CN=$student,OU=Users,O=UCLA,L=Los Angeles,ST=California,C=US"
+    local student_db="$student"
     
     # Create student's personal database
     run_mongosh "
@@ -318,7 +322,7 @@ grant_admin_access_to_student_db() {
     local admin="$1"
     local student_db="$2"
     
-    local admin_subject="CN=$admin,OU=MSBA,O=UCLA,L=Los Angeles,ST=California,C=US"
+    local admin_subject="CN=$admin,OU=Users,O=UCLA,L=Los Angeles,ST=California,C=US"
     
     run_mongosh "
         use \$external;

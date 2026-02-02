@@ -225,12 +225,13 @@ setup_system_mongosh_alias() {
 _MONGO_CLIENT_CERT_DIR="/etc/mongodb/client-certs"
 _MONGO_CA_CERT="/etc/mongodb/ssl/ca.pem"
 _MONGO_USER_CERT="$_MONGO_CLIENT_CERT_DIR/$USER/mongodb.pem"
-# User's default database (matches PostgreSQL pattern)
-_MONGO_USER_DB="${USER}_db"
+# User's default database (matches PostgreSQL pattern - same as username)
+_MONGO_USER_DB="$USER"
 
 # If user has a certificate, set up the alias with their default database
+# Use connection URI to specify both default DB and authSource separately
 if [[ -f "$_MONGO_USER_CERT" && -f "$_MONGO_CA_CERT" ]]; then
-    alias mongosh="mongosh --tls --tlsCertificateKeyFile $_MONGO_USER_CERT --tlsCAFile $_MONGO_CA_CERT --authenticationMechanism MONGODB-X509 --authenticationDatabase \$external $_MONGO_USER_DB"
+    alias mongosh="mongosh 'mongodb://127.0.0.1:27017/${_MONGO_USER_DB}?authSource=\\\$external' --tls --tlsCertificateKeyFile $_MONGO_USER_CERT --tlsCAFile $_MONGO_CA_CERT --authenticationMechanism MONGODB-X509"
 fi
 
 # Cleanup variables
