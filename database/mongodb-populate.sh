@@ -39,7 +39,8 @@ load_config() {
         # Check if jq is available
         if command -v jq > /dev/null 2>&1; then
             MONGO_ADMIN_USER=$(jq -r '.mongo_admin_user // "mongoadmin"' "$CONFIG_FILE")
-            MONGO_ADMIN_PASS=$(jq -r '.mongo_admin_pass // ""' "$CONFIG_FILE")
+            # Use IFS read to prevent shell expansion of special characters in password
+            IFS= read -r MONGO_ADMIN_PASS < <(jq -r '.mongo_admin_pass // ""' "$CONFIG_FILE")
             COURSE_DB=$(jq -r '.course_db // "msba405"' "$CONFIG_FILE")
             local cfg_admin_file=$(jq -r '.admin_users_file // ""' "$CONFIG_FILE")
             if [[ -n "$cfg_admin_file" && -z "$ADMIN_FILE" ]]; then
@@ -163,13 +164,23 @@ fi
 
 # ==============================================================================
 # HELPER: Run mongosh with admin credentials (TLS mode, password auth)
+# Note: Uses connection string to properly handle special characters in password
 # ==============================================================================
 run_mongosh() {
+    local eval_cmd="$1"
+    
+    # Write password to temp file to avoid shell expansion, then URL-encode it
+    local tmpfile
+    tmpfile=$(mktemp)
+    printf '%s' "$MONGO_ADMIN_PASS" > "$tmpfile"
+    
+    local encoded_pass
+    encoded_pass=$(python3 -c "import urllib.parse; print(urllib.parse.quote(open('$tmpfile').read(), safe=''))")
+    rm -f "$tmpfile"
+    
     /usr/bin/mongosh --quiet \
-        --tls --tlsCAFile "$CA_CERT" \
-        -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS" \
-        --authenticationDatabase admin \
-        --eval "$1"
+        "mongodb://${MONGO_ADMIN_USER}:${encoded_pass}@127.0.0.1:27017/admin?tls=true&tlsCAFile=${CA_CERT}&authSource=admin" \
+        --eval "$eval_cmd"
 }
 
 # ==============================================================================
