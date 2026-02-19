@@ -7,7 +7,7 @@
 #
 # Features:
 #   - Installs latest ArangoDB 3.12 from official download.arangodb.com repo
-#   - Configures root password non-interactively
+#   - Reliably sets root password (with fallback methods)
 #   - Enables remote web UI access (binds to 0.0.0.0)
 #   - Opens firewall ports for HTTP API/Web UI (8529)
 #
@@ -123,7 +123,7 @@ install_arangodb() {
 
     # 1. Install prerequisites
     apt-get update -qq || true
-    apt-get install -y curl gnupg2 apt-transport-https
+    apt-get install -y curl gnupg2 apt-transport-https jq
 
     # 2. Add ArangoDB GPG key (modern signed-by method)
     echo "Adding ArangoDB GPG key..."
@@ -137,6 +137,8 @@ install_arangodb() {
         tee /etc/apt/sources.list.d/arangodb.list
 
     # 4. Pre-seed debconf so the installer doesn't prompt interactively
+    #    NOTE: This may not take effect on all distros/versions — the
+    #    set_root_password step below handles that case.
     echo "Pre-configuring ArangoDB root password..."
     echo "arangodb3 arangodb3/password password $ARANGO_ROOT_PASSWORD" | debconf-set-selections
     echo "arangodb3 arangodb3/password_again password $ARANGO_ROOT_PASSWORD" | debconf-set-selections
@@ -149,6 +151,86 @@ install_arangodb() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y arangodb3
 
     echo "ArangoDB installed successfully."
+}
+
+# ==============================================================================
+# SET ROOT PASSWORD (robust, with fallback)
+# ==============================================================================
+# debconf pre-seeding is unreliable across distros. This function ensures the
+# root password is correctly set after installation by trying multiple methods.
+set_root_password() {
+    echo "Setting root password..."
+
+    local api_url="http://127.0.0.1:${ARANGO_PORT}/_api/version"
+
+    # Method 1: Password already works (debconf succeeded)
+    if curl -sf "$api_url" -u "root:${ARANGO_ROOT_PASSWORD}" > /dev/null 2>&1; then
+        echo "Root password is already set correctly."
+        return
+    fi
+
+    # Method 2: Empty password (debconf was ignored) — update via API
+    if curl -sf "$api_url" -u "root:" > /dev/null 2>&1; then
+        echo "ArangoDB has empty root password. Setting password via API..."
+        curl -sf -X PATCH "http://127.0.0.1:${ARANGO_PORT}/_api/user/root" \
+            -u "root:" \
+            -H "Content-Type: application/json" \
+            -d "{\"passwd\": \"${ARANGO_ROOT_PASSWORD}\"}" > /dev/null
+
+        # Verify
+        if curl -sf "$api_url" -u "root:${ARANGO_ROOT_PASSWORD}" > /dev/null 2>&1; then
+            echo "Root password set successfully."
+            return
+        fi
+    fi
+
+    # Method 3: Temporarily disable authentication, set password, re-enable
+    echo "Fallback: Temporarily disabling authentication to set root password..."
+    local config_file="/etc/arangodb3/arangod.conf"
+
+    # Disable authentication
+    if grep -q "^authentication = " "$config_file" 2>/dev/null; then
+        sed -i 's/^authentication = .*/authentication = false/' "$config_file"
+    else
+        sed -i '/^\[server\]/a authentication = false' "$config_file"
+    fi
+
+    systemctl restart arangodb3
+    sleep 3
+
+    # Wait for ArangoDB to come up
+    local attempt=0
+    while [[ $attempt -lt 15 ]]; do
+        if curl -sf "$api_url" > /dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+        ((attempt++))
+    done
+
+    # Set password via API (no auth required now)
+    curl -sf -X PATCH "http://127.0.0.1:${ARANGO_PORT}/_api/user/root" \
+        -H "Content-Type: application/json" \
+        -d "{\"passwd\": \"${ARANGO_ROOT_PASSWORD}\"}" > /dev/null
+
+    # Re-enable authentication
+    sed -i 's/^authentication = false/authentication = true/' "$config_file"
+    systemctl restart arangodb3
+    sleep 3
+
+    # Wait and verify
+    attempt=0
+    while [[ $attempt -lt 15 ]]; do
+        if curl -sf "$api_url" -u "root:${ARANGO_ROOT_PASSWORD}" > /dev/null 2>&1; then
+            echo "Root password set successfully (via auth-disable fallback)."
+            return
+        fi
+        sleep 1
+        ((attempt++))
+    done
+
+    echo "ERROR: Could not set root password. Check /var/log/arangodb3/ for details."
+    exit 1
 }
 
 # ==============================================================================
@@ -231,6 +313,9 @@ main() {
     echo ""
 
     start_arangodb
+    echo ""
+
+    set_root_password
     echo ""
 
     # Get ArangoDB version
