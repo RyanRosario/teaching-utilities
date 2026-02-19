@@ -28,7 +28,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/arangodb-config.json"
 
-GCS_BUCKET="gs://teaching-datasets"
+GCS_BUCKET="gs://teaching_datasets"
 TEMP_DIR="/tmp/arangodb-import-$$"
 COURSE_DB=""
 ARANGO_ROOT_PASSWORD=""

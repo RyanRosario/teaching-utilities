@@ -28,7 +28,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/mongodb-config.json"
 
-GCS_BUCKET="gs://teaching-datasets"
+GCS_BUCKET="gs://teaching_datasets"
 TEMP_DIR="/tmp/mongodb-import-$$"
 COURSE_DB=""
 MONGO_ADMIN_USER=""

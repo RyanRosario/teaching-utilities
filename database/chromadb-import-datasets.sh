@@ -36,7 +36,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/chromadb-config.json"
 
-GCS_BUCKET="gs://teaching-datasets"
+GCS_BUCKET="gs://teaching_datasets"
 TEMP_DIR="/tmp/chromadb-import-$$"
 COURSE_DB=""
 CHROMA_HOST="127.0.0.1"
