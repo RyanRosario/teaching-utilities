@@ -409,7 +409,7 @@ reset_admin_password() {
     sudo systemctl restart mongod
     sleep 3
 
-    # 2. Reset the password
+    # 2. Create or reset admin user
     local mongosh_args="--quiet"
     if [[ -f "$CA_CERT" ]]; then
         mongosh_args="$mongosh_args --tls --tlsCAFile $CA_CERT"
@@ -417,9 +417,24 @@ reset_admin_password() {
 
     /usr/bin/mongosh $mongosh_args --eval "
         const adminDb = db.getSiblingDB('admin');
-        adminDb.changeUserPassword('$MONGO_ADMIN_USER',
-            $(printf '%s' "$MONGO_ADMIN_PASS" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'));
-        print('Admin password updated successfully.');
+        const pwd = $(printf '%s' "$MONGO_ADMIN_PASS" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))');
+        try {
+            adminDb.dropUser('$MONGO_ADMIN_USER');
+            print('Dropped existing admin user.');
+        } catch(e) {
+            print('No existing admin user to drop.');
+        }
+        adminDb.createUser({
+            user: '$MONGO_ADMIN_USER',
+            pwd: pwd,
+            roles: [
+                { role: 'userAdminAnyDatabase', db: 'admin' },
+                { role: 'readWriteAnyDatabase', db: 'admin' },
+                { role: 'dbAdminAnyDatabase', db: 'admin' },
+                { role: 'clusterAdmin', db: 'admin' }
+            ]
+        });
+        print('Admin user created successfully.');
     "
 
     # 3. Re-enable authorization
