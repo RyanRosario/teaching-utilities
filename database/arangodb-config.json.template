@@ -1,0 +1,6 @@
+{
+    "arango_root_password": "CHANGEME",
+    "arango_bind": "0.0.0.0",
+    "course_db": "cs143",
+    "admin_users_file": "admin-users.txt"
+}
