@@ -137,36 +137,29 @@ done
 # ==============================================================================
 # VALIDATION
 # ==============================================================================
-if [[ -z "$REDIS_ADMIN_PASS" ]]; then
-    # Try connecting without a password first
-    if redis-cli ping 2>/dev/null | grep -q "PONG"; then
-        echo "Redis is running without password authentication."
+
+# Auto-detect whether Redis requires a password
+if redis-cli ping 2>/dev/null | grep -q "PONG"; then
+    # Redis accepts connections without auth — ignore any config password
+    REDIS_ADMIN_PASS=""
+    echo "Redis is running (no password required)."
+elif [[ -n "$REDIS_ADMIN_PASS" ]]; then
+    if redis-cli -a "$REDIS_ADMIN_PASS" --no-auth-warning ping 2>/dev/null | grep -q "PONG"; then
+        echo "Redis is running (authenticated)."
     else
-        echo "Redis admin password not set in config file or command-line args."
-        read -s -p "Enter Redis admin password (or press Enter for none): " REDIS_ADMIN_PASS
-        echo ""
+        echo "Error: Cannot connect to Redis with configured password."
+        exit 1
     fi
+else
+    echo "Error: Cannot connect to Redis. Is Redis running?"
+    echo "Run redis-bootstrap.sh first, then check: systemctl status redis-server"
+    exit 1
 fi
 
 if [[ -z "$COURSE_DB" ]]; then
     echo "Error: Course key prefix not set."
     echo "Set 'course_db' in $CONFIG_FILE (e.g. \"course_db\": \"msba405\")"
     exit 1
-fi
-
-# Verify Redis is running
-if [[ -n "$REDIS_ADMIN_PASS" ]]; then
-    if ! redis-cli -a "$REDIS_ADMIN_PASS" --no-auth-warning ping 2>/dev/null | grep -q "PONG"; then
-        echo "Error: Cannot connect to Redis. Is Redis running?"
-        echo "Run redis-bootstrap.sh first, then check: systemctl status redis-server"
-        exit 1
-    fi
-else
-    if ! redis-cli ping 2>/dev/null | grep -q "PONG"; then
-        echo "Error: Cannot connect to Redis. Is Redis running?"
-        echo "Run redis-bootstrap.sh first, then check: systemctl status redis-server"
-        exit 1
-    fi
 fi
 
 # ==============================================================================
