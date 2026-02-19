@@ -169,6 +169,14 @@ cat <<EOF | sudo tee /etc/pam.d/postgresql
 EOF
 echo "PAM service configured for PostgreSQL."
 
+# Add postgres user to shadow group so it can read /etc/shadow for PAM auth
+if ! groups postgres | grep -q '\bshadow\b'; then
+    sudo usermod -aG shadow postgres
+    echo "Added postgres user to shadow group for PAM authentication."
+else
+    echo "Postgres user already in shadow group."
+fi
+
 # 7. Open Firewall (Optional but recommended if UFW is active)
 if command -v ufw > /dev/null; then
     echo "Allowing port 5432 through UFW..."
@@ -248,7 +256,7 @@ echo ""
 echo "Installed and configured:"
 echo "  - PostgreSQL $PG_VERSION (listening on all interfaces)"
 echo "  - pgaudit extension (audit logging enabled)"
-echo "  - Remote access via SCRAM-SHA-256"
+echo "  - Remote access via PAM (Unix password authentication)"
 echo "  - 100-day log retention"
 echo ""
 echo "For password reset app (Node.js, Nginx, Certbot), run:"
