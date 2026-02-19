@@ -138,12 +138,13 @@ done
 # VALIDATION
 # ==============================================================================
 if [[ -z "$REDIS_ADMIN_PASS" ]]; then
-    echo "Redis admin password not set in config file or command-line args."
-    read -s -p "Enter Redis admin password: " REDIS_ADMIN_PASS
-    echo ""
-    if [[ -z "$REDIS_ADMIN_PASS" ]]; then
-        echo "Error: Password cannot be empty."
-        exit 1
+    # Try connecting without a password first
+    if redis-cli ping 2>/dev/null | grep -q "PONG"; then
+        echo "Redis is running without password authentication."
+    else
+        echo "Redis admin password not set in config file or command-line args."
+        read -s -p "Enter Redis admin password (or press Enter for none): " REDIS_ADMIN_PASS
+        echo ""
     fi
 fi
 
@@ -154,10 +155,18 @@ if [[ -z "$COURSE_DB" ]]; then
 fi
 
 # Verify Redis is running
-if ! redis-cli -a "$REDIS_ADMIN_PASS" --no-auth-warning ping 2>/dev/null | grep -q "PONG"; then
-    echo "Error: Cannot connect to Redis. Is Redis running?"
-    echo "Run redis-bootstrap.sh first, then check: systemctl status redis-server"
-    exit 1
+if [[ -n "$REDIS_ADMIN_PASS" ]]; then
+    if ! redis-cli -a "$REDIS_ADMIN_PASS" --no-auth-warning ping 2>/dev/null | grep -q "PONG"; then
+        echo "Error: Cannot connect to Redis. Is Redis running?"
+        echo "Run redis-bootstrap.sh first, then check: systemctl status redis-server"
+        exit 1
+    fi
+else
+    if ! redis-cli ping 2>/dev/null | grep -q "PONG"; then
+        echo "Error: Cannot connect to Redis. Is Redis running?"
+        echo "Run redis-bootstrap.sh first, then check: systemctl status redis-server"
+        exit 1
+    fi
 fi
 
 # ==============================================================================
