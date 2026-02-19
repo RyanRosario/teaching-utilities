@@ -1,0 +1,8 @@
+{
+    "chroma_server_token": "CHANGEME",
+    "chroma_host": "0.0.0.0",
+    "chroma_port": 8000,
+    "chroma_version": "0.6.3",
+    "course_db": "",
+    "admin_users_file": ""
+}
