@@ -131,12 +131,26 @@ echo ""
 # ==============================================================================
 # SETUP
 # ==============================================================================
-mkdir -p "$TEMP_DIR"
+DATA_DIR="/opt/teaching-datasets"
+mkdir -p "$DATA_DIR" "$TEMP_DIR"
 cleanup() {
     echo "Cleaning up temporary files..."
     rm -rf "$TEMP_DIR"
 }
 trap cleanup EXIT
+
+# Download helper: check local cache first, then GCS
+download_dataset() {
+    local filename="$1"
+    if [[ -f "$DATA_DIR/$filename" ]]; then
+        echo "Found local copy: $DATA_DIR/$filename"
+        cp "$DATA_DIR/$filename" "$TEMP_DIR/"
+    else
+        echo "Downloading $filename from GCS..."
+        gsutil cp "${GCS_BUCKET}/$filename" "$DATA_DIR/"
+        cp "$DATA_DIR/$filename" "$TEMP_DIR/"
+    fi
+}
 
 # ==============================================================================
 # IMPORT HELPER
@@ -167,8 +181,7 @@ echo "----------------------------------------------"
 echo "1. Airbnb - listingsAndReviews"
 echo "----------------------------------------------"
 
-echo "Downloading listingsAndReviews.json.tgz from GCS..."
-gsutil cp "${GCS_BUCKET}/listingsAndReviews.json.tgz" "$TEMP_DIR/"
+download_dataset "listingsAndReviews.json.tgz"
 
 echo "Extracting..."
 cd "$TEMP_DIR"
@@ -177,16 +190,16 @@ tar xzf listingsAndReviews.json.tgz
 # Find and import all JSON files with airbnb_ prefix
 airbnb_count=0
 for json_file in $(find "$TEMP_DIR" -name "*.json" -not -path "*/yelp*" | sort); do
-    # Get base name without extension
-    basename=$(basename "$json_file" .json)
-    collection="airbnb_${basename}"
+    basename_noext=$(basename "$json_file" .json)
+    collection="airbnb_${basename_noext}"
 
     import_json_file "$json_file" "$collection"
-    ((airbnb_count++))
+    airbnb_count=$((airbnb_count + 1))
 done
 
-# Clean up airbnb files before yelp extraction
+# Clean up extracted files before yelp extraction
 rm -f "$TEMP_DIR/listingsAndReviews.json.tgz"
+find "$TEMP_DIR" -name "*.json" -not -name "yelp_*" -delete 2>/dev/null || true
 
 echo ""
 
@@ -197,8 +210,7 @@ echo "----------------------------------------------"
 echo "2. Yelp Academic Dataset"
 echo "----------------------------------------------"
 
-echo "Downloading yelp_dataset.tar from GCS..."
-gsutil cp "${GCS_BUCKET}/yelp_dataset.tar" "$TEMP_DIR/"
+download_dataset "yelp_dataset.tar"
 
 echo "Extracting..."
 cd "$TEMP_DIR"
@@ -208,14 +220,12 @@ tar xf yelp_dataset.tar
 # Yelp files are named: yelp_academic_dataset_<type>.json
 yelp_count=0
 for json_file in $(find "$TEMP_DIR" -name "yelp_academic_dataset_*.json" | sort); do
-    # Extract the type from the filename
-    # yelp_academic_dataset_business.json → business
-    basename=$(basename "$json_file" .json)
-    type_name=${basename#yelp_academic_dataset_}
+    basename_noext=$(basename "$json_file" .json)
+    type_name=${basename_noext#yelp_academic_dataset_}
     collection="yelp_${type_name}"
 
     import_json_file "$json_file" "$collection"
-    ((yelp_count++))
+    yelp_count=$((yelp_count + 1))
 done
 
 echo ""

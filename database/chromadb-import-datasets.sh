@@ -137,12 +137,26 @@ echo ""
 # ==============================================================================
 # SETUP
 # ==============================================================================
-mkdir -p "$TEMP_DIR"
+DATA_DIR="/opt/teaching-datasets"
+mkdir -p "$DATA_DIR" "$TEMP_DIR"
 cleanup() {
     echo "Cleaning up temporary files..."
     rm -rf "$TEMP_DIR"
 }
 trap cleanup EXIT
+
+# Download helper: check local cache first, then GCS
+download_dataset() {
+    local filename="$1"
+    if [[ -f "$DATA_DIR/$filename" ]]; then
+        echo "Found local copy: $DATA_DIR/$filename"
+        cp "$DATA_DIR/$filename" "$TEMP_DIR/"
+    else
+        echo "Downloading $filename from GCS..."
+        gsutil cp "${GCS_BUCKET}/$filename" "$DATA_DIR/"
+        cp "$DATA_DIR/$filename" "$TEMP_DIR/"
+    fi
+}
 
 # Install sentence-transformers if needed
 echo "Ensuring embedding dependencies are installed..."
@@ -152,14 +166,11 @@ echo "Ensuring embedding dependencies are installed..."
 # DOWNLOAD DATASETS
 # ==============================================================================
 echo "----------------------------------------------"
-echo "Downloading datasets from GCS..."
+echo "Downloading datasets..."
 echo "----------------------------------------------"
 
-echo "Downloading listingsAndReviews.json.tgz..."
-gsutil cp "${GCS_BUCKET}/listingsAndReviews.json.tgz" "$TEMP_DIR/"
-
-echo "Downloading yelp_dataset.tar..."
-gsutil cp "${GCS_BUCKET}/yelp_dataset.tar" "$TEMP_DIR/"
+download_dataset "listingsAndReviews.json.tgz"
+download_dataset "yelp_dataset.tar"
 
 echo "Extracting..."
 cd "$TEMP_DIR"
