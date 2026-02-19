@@ -19,5 +19,12 @@
     "password": "",
     "database": "",
     "ssl": false
+  },
+  "mongodb": {
+    "adminUser": "mongoadmin",
+    "adminPass": "",
+    "host": "127.0.0.1",
+    "port": 27017,
+    "caFile": "/etc/mongodb/ssl/ca.pem"
   }
 }

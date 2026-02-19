@@ -2,7 +2,7 @@
 
 # Percona Server for MongoDB Population Script
 # This script provisions user accounts and database permissions:
-#   - Creates msba405 database: admins read/write, students read-only
+#   - Creates course database: admins read/write, students read-only
 #   - Creates per-student databases: each student has their own private database
 #   - Generates X.509 client certificates for passwordless authentication
 #
@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/mongodb-config.json"
 
 # Default values
-COURSE_DB="msba405"
+COURSE_DB=""
 ADMIN_FILE=""
 MONGO_ADMIN_USER="mongoadmin"
 MONGO_ADMIN_PASS=""
@@ -41,7 +41,7 @@ load_config() {
             MONGO_ADMIN_USER=$(jq -r '.mongo_admin_user // "mongoadmin"' "$CONFIG_FILE")
             # Use IFS read to prevent shell expansion of special characters in password
             IFS= read -r MONGO_ADMIN_PASS < <(jq -r '.mongo_admin_pass // ""' "$CONFIG_FILE")
-            COURSE_DB=$(jq -r '.course_db // "msba405"' "$CONFIG_FILE")
+            COURSE_DB=$(jq -r '.course_db // ""' "$CONFIG_FILE")
             local cfg_admin_file=$(jq -r '.admin_users_file // ""' "$CONFIG_FILE")
             if [[ -n "$cfg_admin_file" && -z "$ADMIN_FILE" ]]; then
                 # Resolve relative path from config file location
@@ -115,7 +115,7 @@ while [[ $# -gt 0 ]]; do
             echo "Configuration is read from mongodb-config.json:"
             echo "  - mongo_admin_user: MongoDB admin username"
             echo "  - mongo_admin_pass: MongoDB admin password"
-            echo "  - course_db: Course database name (default: msba405)"
+            echo "  - course_db: Course database name (required)"
             echo "  - admin_users_file: Path to admin usernames file"
             echo ""
             echo "Options:"
@@ -150,8 +150,18 @@ done
 
 # Validate required arguments
 if [[ -z "$MONGO_ADMIN_PASS" ]]; then
-    echo "Error: MongoDB admin password not set."
-    echo "Set 'mongo_admin_pass' in $CONFIG_FILE or use --mongo-admin-pass"
+    echo "MongoDB admin password not set in config file or command-line args."
+    read -s -p "Enter MongoDB admin password: " MONGO_ADMIN_PASS
+    echo ""
+    if [[ -z "$MONGO_ADMIN_PASS" ]]; then
+        echo "Error: Password cannot be empty."
+        exit 1
+    fi
+fi
+
+if [[ -z "$COURSE_DB" ]]; then
+    echo "Error: Course database name not set."
+    echo "Set 'course_db' in $CONFIG_FILE (e.g. \"course_db\": \"msba405\")"
     exit 1
 fi
 
