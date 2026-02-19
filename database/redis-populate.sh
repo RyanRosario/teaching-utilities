@@ -164,7 +164,11 @@ fi
 # HELPER: Run redis-cli with admin auth
 # ==============================================================================
 run_redis() {
-    redis-cli -a "$REDIS_ADMIN_PASS" --no-auth-warning "$@"
+    if [[ -n "$REDIS_ADMIN_PASS" ]]; then
+        redis-cli -a "$REDIS_ADMIN_PASS" --no-auth-warning "$@"
+    else
+        redis-cli "$@"
+    fi
 }
 
 # ==============================================================================
