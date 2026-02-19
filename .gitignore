@@ -1,0 +1,22 @@
+# Config files (contain passwords and environment-specific settings)
+*-config*
+!*-config*.template
+**/config.json
+*.cfg
+!*.cfg.template
+
+# Data files (may contain PII)
+*.csv
+!*.csv.template
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Node.js
+node_modules/

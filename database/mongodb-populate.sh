@@ -159,6 +159,12 @@ if [[ -z "$MONGO_ADMIN_PASS" ]]; then
     fi
 fi
 
+if [[ "$MONGO_ADMIN_PASS" =~ [^a-zA-Z0-9_.-] ]]; then
+    echo "Warning: Admin password contains special characters."
+    echo "This is OK (we use CLI flags, not URI), but may cause issues"
+    echo "with other tools that embed credentials in MongoDB URIs."
+fi
+
 if [[ -z "$COURSE_DB" ]]; then
     echo "Error: Course database name not set."
     echo "Set 'course_db' in $CONFIG_FILE (e.g. \"course_db\": \"msba405\")"
@@ -178,7 +184,11 @@ fi
 run_mongosh() {
     local eval_cmd="$1"
     /usr/bin/mongosh --quiet \
-        "mongodb://${MONGO_ADMIN_USER}:${MONGO_ADMIN_PASS}@127.0.0.1:27017/admin?tls=true&tlsCAFile=${CA_CERT}&authSource=admin" \
+        --host 127.0.0.1 --port 27017 \
+        --tls --tlsCAFile "$CA_CERT" \
+        --username "$MONGO_ADMIN_USER" \
+        --password "$MONGO_ADMIN_PASS" \
+        --authenticationDatabase admin \
         --eval "$eval_cmd"
 }
 

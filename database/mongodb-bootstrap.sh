@@ -67,6 +67,10 @@ while [[ $# -gt 0 ]]; do
             MONGO_ADMIN_PASS="$2"
             shift 2
             ;;
+        --reset-admin-password)
+            RESET_ADMIN_PASSWORD=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -77,9 +81,10 @@ while [[ $# -gt 0 ]]; do
             echo "  - 100-day log retention"
             echo ""
             echo "Options:"
-            echo "  --config <file>           Path to config file (default: mongodb-config.json)"
-            echo "  --mongo-admin-pass <pass> Override MongoDB admin password from config"
-            echo "  --help, -h                Show this help message"
+            echo "  --config <file>              Path to config file (default: mongodb-config.json)"
+            echo "  --mongo-admin-pass <pass>    Override MongoDB admin password from config"
+            echo "  --reset-admin-password       Reset admin password (disables auth temporarily)"
+            echo "  --help, -h                   Show this help message"
             echo ""
             echo "Configuration is read from mongodb-config.json. Command-line args override."
             echo "After running this script, run mongodb-populate.sh to provision users."
@@ -101,6 +106,12 @@ if [[ -z "$MONGO_ADMIN_PASS" ]]; then
         echo "Error: Password cannot be empty."
         exit 1
     fi
+fi
+
+if [[ "$MONGO_ADMIN_PASS" =~ [^a-zA-Z0-9_.-] ]]; then
+    echo "Warning: Admin password contains special characters."
+    echo "This is OK (we use CLI flags, not URI), but may cause issues"
+    echo "with other tools that embed credentials in MongoDB URIs."
 fi
 
 # ==============================================================================
@@ -251,14 +262,21 @@ PROFILE_EOF
 # ==============================================================================
 setup_mongo_admin() {
     echo "Setting up MongoDB admin user..."
-    
-    # Create admin user with password auth (before enabling X.509)
-    mongosh --quiet --eval "
-        use admin;
+
+    # Build connection args — use TLS if certs exist (re-run), plain if not (fresh install)
+    local mongosh_args="--quiet"
+    if [[ -f "$CA_CERT" ]]; then
+        mongosh_args="$mongosh_args --tls --tlsCAFile $CA_CERT"
+    fi
+
+    # Create admin user with password auth
+    # NOTE: use db.getSiblingDB(), NOT 'use admin' (which doesn't work in --eval)
+    /usr/bin/mongosh $mongosh_args --eval "
+        const adminDb = db.getSiblingDB('admin');
         try {
-            db.createUser({
+            adminDb.createUser({
                 user: '$MONGO_ADMIN_USER',
-                pwd: '$MONGO_ADMIN_PASS',
+                pwd: $(printf '%s' "$MONGO_ADMIN_PASS" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'),
                 roles: [
                     { role: 'userAdminAnyDatabase', db: 'admin' },
                     { role: 'readWriteAnyDatabase', db: 'admin' },
@@ -266,10 +284,16 @@ setup_mongo_admin() {
                     { role: 'clusterAdmin', db: 'admin' }
                 ]
             });
+            print('Admin user created successfully.');
         } catch(e) {
-            if (e.codeName !== 'DuplicateKeyValue') print('Admin setup: ' + e.message);
+            if (e.codeName === 'DuplicateKey' || e.code === 11000) {
+                print('Admin user already exists, continuing...');
+            } else {
+                print('ERROR creating admin user: ' + e.message);
+                throw e;
+            }
         }
-    " 2>/dev/null || echo "Admin user may already exist, continuing..."
+    "
     
     # Generate server certificates
     generate_server_certificates
@@ -373,12 +397,63 @@ EOF
 }
 
 # ==============================================================================
+# RESET ADMIN PASSWORD (recovers from lost/broken admin auth)
+# ==============================================================================
+reset_admin_password() {
+    echo "Resetting MongoDB admin password..."
+    local MONGOD_CONF="/etc/mongod.conf"
+
+    # 1. Temporarily disable authorization
+    echo "Temporarily disabling authorization..."
+    sudo sed -i 's/authorization: enabled/authorization: disabled/' "$MONGOD_CONF"
+    sudo systemctl restart mongod
+    sleep 3
+
+    # 2. Reset the password
+    local mongosh_args="--quiet"
+    if [[ -f "$CA_CERT" ]]; then
+        mongosh_args="$mongosh_args --tls --tlsCAFile $CA_CERT"
+    fi
+
+    /usr/bin/mongosh $mongosh_args --eval "
+        const adminDb = db.getSiblingDB('admin');
+        adminDb.changeUserPassword('$MONGO_ADMIN_USER',
+            $(printf '%s' "$MONGO_ADMIN_PASS" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))'));
+        print('Admin password updated successfully.');
+    "
+
+    # 3. Re-enable authorization
+    echo "Re-enabling authorization..."
+    sudo sed -i 's/authorization: disabled/authorization: enabled/' "$MONGOD_CONF"
+    sudo systemctl restart mongod
+    sleep 3
+
+    # 4. Verify
+    if /usr/bin/mongosh --quiet --host 127.0.0.1 --port 27017 \
+        --tls --tlsCAFile "$CA_CERT" \
+        --username "$MONGO_ADMIN_USER" \
+        --password "$MONGO_ADMIN_PASS" \
+        --authenticationDatabase admin \
+        --eval "print('Auth OK')" 2>/dev/null | grep -q "Auth OK"; then
+        echo "Admin password reset and verified successfully!"
+    else
+        echo "ERROR: Password reset may have failed. Check mongod logs."
+        exit 1
+    fi
+}
+
+# ==============================================================================
 # MAIN EXECUTION
 # ==============================================================================
 
 echo "=============================================="
 echo "Percona Server for MongoDB Bootstrap"
 echo "=============================================="
+
+if [[ "$RESET_ADMIN_PASSWORD" == true ]]; then
+    reset_admin_password
+    exit 0
+fi
 
 install_mongodb
 setup_mongo_admin
