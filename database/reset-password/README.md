@@ -55,6 +55,13 @@ Update the configuration file with your specific settings:
     "password": "your-db-password",
     "database": "admin",
     "ssl": false
+  },
+  "mongodb": {
+    "adminUser": "mongoadmin",
+    "adminPass": "your-mongo-admin-password",
+    "host": "127.0.0.1",
+    "port": 27017,
+    "caFile": "/etc/mongodb/ssl/ca.pem"
   }
 }
 ```
@@ -65,6 +72,9 @@ Update the configuration file with your specific settings:
 - `port`: Internal port the Node.js app listens on
 - `email`: SMTP configuration for sending password reset emails
 - `database`: PostgreSQL connection settings
+- `mongodb`: MongoDB admin credentials for password sync (optional)
+  - When configured, resetting a Unix password will also update the MongoDB SCRAM password
+  - This allows students to use the same password for SSH and MongoDB (DataGrip) connections
 
 ### Sudo Permissions
 

@@ -244,6 +244,7 @@ EOF
 
 provision_admin() {
     local admin="$1"
+    local password="${2:-}"
     
     echo "Provisioning admin: $admin"
     
@@ -253,14 +254,14 @@ provision_admin() {
         return
     fi
     
-    # Generate client certificate
+    # Generate client certificate (for local terminal access)
     generate_client_cert "$admin"
     
     # The X.509 subject DN becomes the MongoDB username (RFC 2253 format, OU=Users to avoid cluster member error)
     local subject_dn="CN=$admin,OU=Users,O=UCLA,L=Los Angeles,ST=California,C=US"
     local admin_db="$admin"
     
-    # Create X.509 user with admin privileges
+    # Create X.509 user with admin privileges (for local terminal access)
     # Admins get: readWriteAnyDatabase (create/manage any DB), dbAdminAnyDatabase (admin any DB)
     run_mongosh "
         db.getSiblingDB('\$external').createUser({
@@ -270,12 +271,43 @@ provision_admin() {
                 { role: 'dbAdminAnyDatabase', db: 'admin' }
             ]
         });
-        print('Created MongoDB user for admin: $admin');
     " 2>/dev/null || true
+    
+    # Create SCRAM-SHA-256 user for remote access (DataGrip)
+    if [[ -n "$password" ]]; then
+        run_mongosh "
+            db.getSiblingDB('admin').createUser({
+                user: '$admin',
+                pwd: '$password',
+                roles: [
+                    { role: 'readWriteAnyDatabase', db: 'admin' },
+                    { role: 'dbAdminAnyDatabase', db: 'admin' }
+                ]
+            });
+        " 2>/dev/null || true
+        echo "Created SCRAM admin user for remote access: $admin"
+    else
+        # Create user with temporary password - admin must use password reset
+        local temp_pass=$(openssl rand -base64 12)
+        run_mongosh "
+            db.getSiblingDB('admin').createUser({
+                user: '$admin',
+                pwd: '$temp_pass',
+                roles: [
+                    { role: 'readWriteAnyDatabase', db: 'admin' },
+                    { role: 'dbAdminAnyDatabase', db: 'admin' }
+                ]
+            });
+        " 2>/dev/null || true
+        echo "Created SCRAM admin user with temp password (use password reset app): $admin"
+    fi
+    
+    echo "Created MongoDB user for admin: $admin"
 }
 
 provision_student() {
     local student="$1"
+    local password="${2:-}"
     
     echo "Provisioning student: $student"
     
@@ -285,7 +317,7 @@ provision_student() {
         return
     fi
     
-    # Generate client certificate
+    # Generate client certificate (for local terminal access)
     generate_client_cert "$student"
     
     # RFC 2253 format DN with OU=Users to avoid cluster member error
@@ -295,7 +327,7 @@ provision_student() {
     # Create student's personal database
     run_mongosh "db.getSiblingDB('$student_db').createCollection('_init');" 2>/dev/null || true
     
-    # Create X.509 user with appropriate roles
+    # Create X.509 user for local terminal access (passwordless)
     run_mongosh "
         db.getSiblingDB('\$external').createUser({
             user: '$subject_dn',
@@ -304,8 +336,39 @@ provision_student() {
                 { role: 'readWrite', db: '$student_db' }
             ]
         });
-        print('Created MongoDB user for student: $student');
-    "
+    " 2>/dev/null || true
+    
+    # Create SCRAM-SHA-256 user for remote access (DataGrip)
+    # Password will be synced with Unix password via password reset app
+    if [[ -n "$password" ]]; then
+        run_mongosh "
+            db.getSiblingDB('$student_db').createUser({
+                user: '$student',
+                pwd: '$password',
+                roles: [
+                    { role: 'read', db: '$COURSE_DB' },
+                    { role: 'readWrite', db: '$student_db' }
+                ]
+            });
+        " 2>/dev/null || true
+        echo "Created SCRAM user for remote access: $student"
+    else
+        # Create user with temporary password - student must use password reset
+        local temp_pass=$(openssl rand -base64 12)
+        run_mongosh "
+            db.getSiblingDB('$student_db').createUser({
+                user: '$student',
+                pwd: '$temp_pass',
+                roles: [
+                    { role: 'read', db: '$COURSE_DB' },
+                    { role: 'readWrite', db: '$student_db' }
+                ]
+            });
+        " 2>/dev/null || true
+        echo "Created SCRAM user with temp password (use password reset app): $student"
+    fi
+    
+    echo "Created MongoDB user for student: $student"
 }
 
 grant_admin_access_to_student_db() {
@@ -409,7 +472,20 @@ _MONGO_USER_CERT="$_MONGO_CLIENT_CERT_DIR/$USER/mongodb.pem"
 _MONGO_USER_DB="$USER"
 
 if [[ -f "$_MONGO_USER_CERT" && -f "$_MONGO_CA_CERT" ]]; then
+    # mongosh alias
     alias mongosh="mongosh 'mongodb://127.0.0.1:27017/${_MONGO_USER_DB}?authSource=\$external' --tls --tlsCertificateKeyFile ${_MONGO_USER_CERT} --tlsCAFile ${_MONGO_CA_CERT} --authenticationMechanism MONGODB-X509"
+    
+    # mongoimport alias
+    alias mongoimport="mongoimport --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
+    
+    # mongoexport alias
+    alias mongoexport="mongoexport --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
+    
+    # mongodump alias
+    alias mongodump="mongodump --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
+    
+    # mongorestore alias
+    alias mongorestore="mongorestore --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
 fi
 
 unset _MONGO_CLIENT_CERT_DIR _MONGO_CA_CERT _MONGO_USER_CERT _MONGO_USER_DB
@@ -491,7 +567,20 @@ _MONGO_USER_CERT="$_MONGO_CLIENT_CERT_DIR/$USER/mongodb.pem"
 _MONGO_USER_DB="$USER"
 
 if [[ -f "$_MONGO_USER_CERT" && -f "$_MONGO_CA_CERT" ]]; then
+    # mongosh alias
     alias mongosh="mongosh 'mongodb://127.0.0.1:27017/${_MONGO_USER_DB}?authSource=\$external' --tls --tlsCertificateKeyFile ${_MONGO_USER_CERT} --tlsCAFile ${_MONGO_CA_CERT} --authenticationMechanism MONGODB-X509"
+    
+    # mongoimport alias
+    alias mongoimport="mongoimport --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
+    
+    # mongoexport alias
+    alias mongoexport="mongoexport --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
+    
+    # mongodump alias
+    alias mongodump="mongodump --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
+    
+    # mongorestore alias
+    alias mongorestore="mongorestore --ssl --sslCAFile ${_MONGO_CA_CERT} --sslPEMKeyFile ${_MONGO_USER_CERT} --authenticationDatabase '\$external' --authenticationMechanism MONGODB-X509"
 fi
 
 unset _MONGO_CLIENT_CERT_DIR _MONGO_CA_CERT _MONGO_USER_CERT _MONGO_USER_DB

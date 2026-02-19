@@ -94,9 +94,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$MONGO_ADMIN_PASS" ]]; then
-    echo "Error: MongoDB admin password not set."
-    echo "Set 'mongo_admin_pass' in $CONFIG_FILE or use --mongo-admin-pass"
-    exit 1
+    echo "MongoDB admin password not set in config file or command-line args."
+    read -s -p "Enter MongoDB admin password: " MONGO_ADMIN_PASS
+    echo ""
+    if [[ -z "$MONGO_ADMIN_PASS" ]]; then
+        echo "Error: Password cannot be empty."
+        exit 1
+    fi
 fi
 
 # ==============================================================================
@@ -107,7 +111,7 @@ install_mongodb() {
 
     # 1. Update system and install prerequisites
     echo "Installing prerequisites..."
-    sudo apt update
+    sudo apt update || true
     sudo apt install -y gnupg curl openssl wget lsb-release
 
     # 2. Install Percona Release tool
@@ -121,7 +125,7 @@ install_mongodb() {
     sudo percona-release enable psmdb-80 release
 
     # 4. Update package cache
-    sudo apt update
+    sudo apt update || true
 
     # 5. Install Percona Server for MongoDB (includes mongosh)
     echo "Installing Percona Server for MongoDB..."
@@ -300,7 +304,7 @@ systemLog:
 
 net:
   port: 27017
-  bindIp: 127.0.0.1
+  bindIp: 0.0.0.0
   tls:
     mode: requireTLS
     certificateKeyFile: $SERVER_CERT
@@ -338,6 +342,12 @@ EOF
     fi
     
     echo "Percona Server for MongoDB configured with TLS, X.509, and audit logging."
+    
+    # Open firewall if UFW is active
+    if command -v ufw > /dev/null; then
+        echo "Allowing port 27017 through UFW..."
+        sudo ufw allow 27017/tcp
+    fi
 }
 
 # ==============================================================================
@@ -383,6 +393,7 @@ echo ""
 echo "Configuration:"
 echo "  - Percona Server for MongoDB 8.0"
 echo "  - TLS/X.509 authentication enabled"
+echo "  - Remote access enabled (listening on all interfaces)"
 echo "  - Audit logging: $AUDIT_LOG_PATH"
 echo "  - Log retention: 100 days"
 echo ""

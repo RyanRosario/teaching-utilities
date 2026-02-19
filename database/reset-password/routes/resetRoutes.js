@@ -41,6 +41,57 @@ async function getEmailForUsername(username) {
     }
 }
 
+// Helper function to update MongoDB SCRAM password
+async function updateMongoPassword(username, newPassword) {
+    return new Promise((resolve, reject) => {
+        // Skip if MongoDB config not present
+        if (!config.mongodb || !config.mongodb.adminUser || !config.mongodb.adminPass) {
+            console.log('MongoDB config not found, skipping MongoDB password update');
+            return resolve();
+        }
+
+        const { adminUser, adminPass, host = '127.0.0.1', port = 27017, caFile = '/etc/mongodb/ssl/ca.pem' } = config.mongodb;
+
+        // Escape special characters in password for JavaScript string
+        const escapedPassword = newPassword.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+        // Update password in user's own database (where SCRAM user was created)
+        const updateCmd = `
+            try {
+                db.getSiblingDB('${username}').updateUser('${username}', { pwd: '${escapedPassword}' });
+                print('Password updated successfully');
+            } catch(e) {
+                // User might not exist in MongoDB yet
+                print('MongoDB user update skipped: ' + e.message);
+            }
+        `;
+
+        const mongosh = spawn('mongosh', [
+            '--quiet',
+            `mongodb://${adminUser}:${adminPass}@${host}:${port}/admin?tls=true&tlsCAFile=${caFile}&authSource=admin`,
+            '--eval', updateCmd
+        ]);
+
+        let stdout = '';
+        let stderr = '';
+
+        mongosh.stdout.on('data', (data) => { stdout += data.toString(); });
+        mongosh.stderr.on('data', (data) => { stderr += data.toString(); });
+
+        mongosh.on('close', (code) => {
+            if (code === 0) {
+                resolve();
+            } else {
+                reject(new Error(`mongosh exited with code ${code}: ${stderr}`));
+            }
+        });
+
+        mongosh.on('error', (err) => {
+            reject(err);
+        });
+    });
+}
+
 // Handle password reset request
 router.post('/request', async (req, res) => {
     try {
@@ -128,6 +179,16 @@ router.post('/new', (req, res) => {
 
             passwd.on('close', (code) => {
                 if (code === 0) {
+                    // Also update MongoDB SCRAM password
+                    updateMongoPassword(tokenData.username, newPassword)
+                        .then(() => {
+                            console.log(`MongoDB password updated for ${tokenData.username}`);
+                        })
+                        .catch(err => {
+                            console.error(`Failed to update MongoDB password for ${tokenData.username}:`, err);
+                            // Continue anyway - Unix password was changed successfully
+                        });
+
                     // Send confirmation email if we have the email address
                     if (email) {
                         transporter.sendMail({
@@ -136,6 +197,7 @@ router.post('/new', (req, res) => {
                             subject: `${config.courseName} Password Change Confirmation`,
                             html: `
                                 <p>Your password for username <strong>${tokenData.username}</strong> has been successfully changed.</p>
+                                <p>This password works for both SSH/terminal access and MongoDB (DataGrip) connections.</p>
                                 <p>If you did not make this change, please contact the course staff immediately.</p>
                             `
                         })
