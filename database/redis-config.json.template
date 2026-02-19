@@ -1,0 +1,5 @@
+{
+    "redis_password": "",
+    "course_db": "",
+    "admin_users_file": "admin.txt"
+}
