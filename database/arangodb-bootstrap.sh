@@ -121,6 +121,8 @@ echo ""
 install_arangodb() {
     echo "Installing ArangoDB from official repository..."
 
+    export DEBIAN_FRONTEND=noninteractive
+
     # 1. Install prerequisites
     apt-get update -qq || true
     apt-get install -y curl gnupg2 apt-transport-https jq
@@ -146,9 +148,12 @@ install_arangodb() {
     echo "arangodb3 arangodb3/storage_engine select auto" | debconf-set-selections
     echo "arangodb3 arangodb3/backup boolean false" | debconf-set-selections
 
-    # 5. Install ArangoDB (non-interactive)
+    # 5. Install ArangoDB (fully non-interactive, auto-accept all prompts)
     apt-get update -qq || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y arangodb3
+    apt-get install -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        arangodb3
 
     echo "ArangoDB installed successfully."
 }
