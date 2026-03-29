@@ -1,0 +1,9 @@
+[canvas]
+token=YOUR_CANVAS_API_TOKEN
+base_url=https://YOUR_CANVAS_DOMAIN
+
+[sheets]
+service_account_file=YOUR_GOOGLE_SERVICE_ACCOUNT_CREDENTIALS_FILE.json
+share_email=YOUR_EMAIL_ADDRESS
+
+# Activate Gmail Postmaster Tools API in Google Cloud Project
